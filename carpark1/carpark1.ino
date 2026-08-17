@@ -43,21 +43,31 @@ const uint32_t DRIVE_TIMEOUT_MS = 10000; // safety: give up on a drive after thi
 // gives no reading at all. So depth moves are only valid with a bin aboard
 // (placing one). Going in empty to collect one must use driveToBin instead.
 const int DEPTH_MM[3] = {235, 430, 630};
-// The rangefinder is not instant, so drop to CREEP_SPEED for the last stretch -
-// slow enough that the car has not travelled far by the time a reading lands.
-// Widen DEPTH_SLOW_MM if it overshoots the target and has to come back.
 // Where the car sits for the fixed scanner to read the label on a bin it is
 // carrying. The scanner's usable window is wide enough to cover depth 1 too, so
 // a bin just picked from the front of a lane can be read without moving at all.
 const int      BARCODE_MM     = 200;     // ideal read distance
 const int      BARCODE_TOL_MM = 20;      // readable band extends this far past
                                          // BARCODE_MM and past depth 1
-// MUST be wider than the distance the car covers in one measurement cycle at
-// DRIVE_SPEED, or the creep never engages: the speed is only updated once per
-// reading, so a zone narrower than one cycle gets crossed at full speed. That
-// is what 80 was - measured travel at DRIVE_SPEED is ~86mm per cycle, so the
-// car went from "still fast" to "past the target" without ever creeping.
-const int      DEPTH_SLOW_MM = 200;      // creep once this close to target
+// TIMED POSITIONING. The drive is self-locking - cutting power stops the car
+// dead, no coast - so distance really is speed x time, and a computed burst
+// positions far more finely than closed-loop laser control ever could. A laser
+// reading takes ~670ms round trip, during which the car covers ~86mm at
+// DRIVE_SPEED, so a pure read-decide-drive loop can only see the world in 86mm
+// steps and cannot hit a +/-10mm window no matter how it is tuned.
+// Measured by the user: ~620mm of rack in ~4.8s at DRIVE_SPEED, and the figure
+// does NOT change with a loaded bin. Re-measure if the gearing or speed change.
+const int      DRIVE_MM_PER_S = 129;
+// Aim deliberately SHORT of the target on every pass, so the car always closes
+// in from one side instead of overshooting and hunting back and forth.
+const int      DEPTH_APPROACH_PCT = 85;
+// A burst shorter than this may not break stiction at all. Its travel must stay
+// under 2 x DEPTH_TOL_MM (here ~13mm vs a 20mm window), or a small correction
+// would jump clean over the target and oscillate.
+const uint32_t DEPTH_MIN_BURST_MS = 100;
+const uint32_t DEPTH_BURST_BOOST_MS = 100;  // added each time a burst does not move the car
+const uint32_t DEPTH_MAX_BOOST_MS = 400;    // give up escalating past this
+const int      DEPTH_STALL_MM = 5;          // less movement than this = did not move
 const int      DEPTH_TOL_MM  = 10;       // within this of target = arrived
 const int      DEPTH_MAX_MISSES = 3;     // consecutive dropped reads before giving up
 const uint32_t DEPTH_SETTLE_MS = 80;     // pause after braking, before measuring
@@ -74,13 +84,14 @@ const uint32_t DEPTH_TIMEOUT_MS = 15000; // safety: give up on a depth move
 // D1..D4 are BCD digits; read as a decimal number they ARE millimeters
 // (doc: 0x12345678 = 12345.678 m). S1S2 = signal quality (bigger = better).
 // Runs at 9600 (hardware-confirmed - the doc page with UART params is missing).
-// 1500 is the value every working depth test ran on - do not shorten it
-// speculatively. It was briefly cut to 600 on the theory that a reading takes
-// ~400ms, a figure inferred from an ASSUMED car speed rather than measured, and
-// that is a good way to start starving real measurements.
-// It is also a distance budget: the car drives for the whole of a measurement.
-// The right way to shrink blind travel is to go slower (DEPTH_SLOW_MM), not to
-// give the sensor less time to answer.
+// 1500 is the value every working depth test ran on. Do NOT shorten it: a real
+// reading round-trips in ~670ms (derived from the measured 129mm/s and the
+// 86mm-per-cycle gap seen in a drive log), so the 600 it was once cut to would
+// have timed out on perfectly good measurements. That cut came from an assumed
+// ~400ms reading time, itself inferred from an assumed car speed - which is
+// exactly how this went wrong. Only change it against a measurement.
+// driveToDepth no longer drives while measuring, so this is no longer a
+// distance budget - the car is stopped for every read.
 const uint32_t RANGE_BAUD    = 9600;
 const uint32_t RANGE_WAIT_MS = 1500;
 
@@ -262,21 +273,25 @@ bool driveToBin() {
   return false;
 }
 
-// Drive the car to a measured depth in the lane. Direction and speed both come
-// from the remaining error each pass, so an overshoot simply reverses. Full
-// speed until within DEPTH_SLOW_MM, creep inside it, brake on arrival.
+// Drive the car to a measured depth in the lane: measure stopped, drive a
+// computed burst, stop, measure again. Two or three passes land inside the
+// tolerance, each aiming DEPTH_APPROACH_PCT of the way so the car converges
+// from one side rather than hunting.
+//
+// EVERY READING IS TAKEN WITH THE CAR STOPPED, which is the condition the
+// rangefinder is reliable in - misses happen while it is moving. That is the
+// real prize here, not just the finer positioning.
 bool driveToDepth(int targetMm, int tolMm) {
   uint32_t t0 = millis();
   int misses = 0;
+  int lastD = -1;                                // reading before the last burst
+  uint32_t boost = 0;                            // extra burst time when nothing moved
   while (millis() - t0 < DEPTH_TIMEOUT_MS) {
-    int d = readDistanceMM();
+    int d = readDistanceMM();                    // car is stopped here, always
     if (d < 0) {
-      // A dropped frame is not a failure - misses happen while the car is
-      // MOVING. Stop rather than roll on blind, then ask again from standstill,
-      // which is the condition the sensor reads best in. Only a run of them is
-      // a real failure. (No DONE/FAIL in this text - the Pi stops reading at
-      // the first line containing either.)
-      car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+      // A dropped frame is not a failure - ask again. The car is already
+      // stopped, so a miss costs time but no travel. (No DONE/FAIL in this
+      // text - the Pi stops reading at the first line containing either.)
       if (++misses >= DEPTH_MAX_MISSES) {
         say("no usable reading from the rangefinder");
         return false;
@@ -287,21 +302,31 @@ bool driveToDepth(int targetMm, int tolMm) {
     Serial1.print("d "); Serial1.println(d);     // progress, echoed by the Pi
     Serial.print("d ");  Serial.println(d);
     int err = targetMm - d;                      // + = deeper, - = too deep
-    if (abs(err) <= tolMm) {
-      car1cmd("AB");                             // brake, then release
-      waitPumping(DEPTH_SETTLE_MS);
-      car1cmd("AS");
-      return true;
+    if (abs(err) <= tolMm) return true;          // already stopped - just done
+
+    // Did the last burst actually move the car? If not, stiction won: lengthen
+    // the next one rather than sitting here buzzing at it forever.
+    if (lastD >= 0 && abs(d - lastD) < DEPTH_STALL_MM) {
+      boost += DEPTH_BURST_BOOST_MS;
+      if (boost > DEPTH_MAX_BOOST_MS) {
+        say("car is not moving - stiction, an obstruction, or a jammed bin");
+        return false;
+      }
+    } else {
+      boost = 0;
     }
-    // Full speed is for going FORWARD only. Blind travel from a missed reading
-    // then goes deeper into the lane - where we are heading anyway, and the
-    // shelf bounds it. In reverse the same miss is ~300mm back toward the dock
-    // with a bin aboard, which is how the car once ran from 330mm to the dock.
-    // A reverse here is also usually an overshoot correction, i.e. a fine
-    // adjustment by definition. So reverse always creeps.
-    bool back = err < 0;
-    carSpeed(back ? 'R' : 'F',
-             (!back && abs(err) > DEPTH_SLOW_MM) ? DRIVE_SPEED : CREEP_SPEED);
+    lastD = d;
+
+    // distance -> time. Aim short by DEPTH_APPROACH_PCT so we never overshoot.
+    uint32_t ms = (uint32_t)abs(err) * DEPTH_APPROACH_PCT * 10 / DRIVE_MM_PER_S;
+    if (ms < DEPTH_MIN_BURST_MS) ms = DEPTH_MIN_BURST_MS;
+    ms += boost;
+
+    carSpeed(err > 0 ? 'F' : 'R', DRIVE_SPEED);
+    waitPumping(ms);
+    car1cmd("AB");                               // brake, settle, then release
+    waitPumping(DEPTH_SETTLE_MS);
+    car1cmd("AS");
   }
   car1cmd("AB"); car1cmd("AS");
   return false;
