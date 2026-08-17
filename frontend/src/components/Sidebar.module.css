@@ -1,0 +1,68 @@
+
+.sidebar {
+  width: 240px;
+  background-color: #f0f0f0;
+  padding: 16px;
+  border-right: 1px solid #ccc;
+  height: 100vh;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.categoryBlock {
+  margin-bottom: 8px;
+}
+
+.categoryBlock.uncategorized {
+  margin-bottom: 32px;
+}
+
+.categoryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.categoryButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.categoryLabel {
+  background: none;
+  border: none;
+  cursor: pointer;
+  flex-grow: 1;
+  text-align: left;
+  padding-left: 6px;
+}
+
+.categoryOptions {
+  background: #fff;
+  border: 1px solid #ccc;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.1);
+  padding: 6px;
+  margin-top: 4px;
+  border-radius: 4px;
+}
+
+.binName {
+  font-size: 0.9em;
+  color: #333;
+  margin-left: 20px;
+  margin-top: 4px;
+}
+
+
+.categoryIndent {
+  margin-left: 20px;
+}

@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.json
+!example.json
+!positions.json
+!offsets.json
+.DS_Store
+frontend/node_modules/
+frontend/build/
+!frontend/package.json
+!frontend/package-lock.json
+!web/**/*.json

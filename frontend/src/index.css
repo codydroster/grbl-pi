@@ -1,0 +1,78 @@
+:root {
+  /* Clean light palette */
+  --bg:        #f5f6f8;   /* app background */
+  --panel:     #ffffff;   /* sidebar / header panels */
+  --raised:    #ffffff;   /* cards, inputs */
+  --line:      #dfe3e8;   /* borders */
+  --line-soft: #eceff3;
+  --text:      #1c2430;
+  --text-dim:  #5b6573;
+  --text-faint:#97a0ac;
+  --accent:     #03a9f4;   /* primary accent — Home Assistant blue */
+  --accent-dim: #0288d1;
+  --green:     #1d9e52;   /* in stock */
+  --green-dim: #157a3e;
+  --red:       #d8423c;   /* out / error */
+  --font-display: 'Saira Condensed', 'Arial Narrow', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+  --font-body: 'IBM Plex Sans', Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+code {
+  font-family: var(--font-mono);
+}
+
+button {
+  font-family: var(--font-body);
+}
+
+input {
+  font-family: var(--font-mono);
+}
+
+/* Bin state animations — pulse the glow, not the opacity, so text stays legible */
+@keyframes flashRed {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(216, 66, 60, 0.0); }
+  50%      { box-shadow: 0 0 10px 1px rgba(216, 66, 60, 0.45); }
+}
+
+@keyframes flashGreen {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(29, 158, 82, 0.0); }
+  50%      { box-shadow: 0 0 10px 1px rgba(29, 158, 82, 0.45); }
+}
+
+.flash-red   { animation: flashRed 1.1s ease-in-out infinite; }
+.flash-green { animation: flashGreen 1.1s ease-in-out infinite; }
+
+/* Requested — waiting for vehicle acknowledgement */
+@keyframes requestPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
+.bin-requested { animation: requestPulse 1.4s ease-in-out infinite; }
+
+/* Status LED dot used on bin cards and the dev page */
+.led {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.led-green { background: var(--green); }
+.led-red   { background: var(--red); }
+.led-accent { background: var(--accent); }
+.led-off   { background: var(--line); }
