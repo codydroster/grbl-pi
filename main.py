@@ -50,6 +50,8 @@ HELP = """commands:
                 Never scans - use 'read' for that
   read          drive to depth 1 AND scan the carried bin's label, arming the
                 scanner on the way in. What store/get use to identify a bin
+  place         creep in until the carried bin meets whatever is already in the
+                lane, and stop there - for dropping at an unknown depth
   dist          car depth in the lane (mm) from carpark's rangefinder
   scan          trigger the barcode scanner and report what it reads
   laser <hex>   hex bytes to the rangefinder, reply shown as hex
@@ -84,6 +86,7 @@ Teensy's USB serial monitor; the shell equivalent is in brackets.
   g       go home: reverse until docked                 [gohome]
   1 2 3   drive to taught depth 1/2/3 (never scans)     [depth N]
   R       depth 1 AND read the label -> "BC <code|->"   [read]
+  P       creep in until the carried bin is stopped     [place]
   m       one rangefinder reading -> "DIST <mm>"        [dist]
   Q       fresh scan, waits for it -> "BC <code|->"     [scan]
   q       last barcode already seen -> "BC <code>"      [-]
@@ -145,6 +148,11 @@ def goto_slot(carriages, n, col, row):
 
 
 STAGING = (0, 0)   # bins to be put away arrive here; column 0 is not storage
+OUTPUT  = (0, 1)   # retrieved bins are dropped here for a human to collect.
+                   # Separate from STAGING so an arriving bin and a retrieved
+                   # one never contend for the same lane. How deep it already
+                   # is depends on what has been collected, so the drop is felt
+                   # out with carpark's 'P' rather than addressed by depth.
 
 
 def rack_lanes():
@@ -317,14 +325,23 @@ def retrieve_bin(carriages, active, say, barcode):
 
         got_key = slots.find(got)
         if got == barcode:
-            say("carriage -> staging %d,%d" % STAGING)
-            if not goto_slot(carriages, active, *STAGING):
-                say("bin is on the car, but cannot reach staging")
+            say("carriage -> output %d,%d" % OUTPUT)
+            if not goto_slot(carriages, active, *OUTPUT):
+                say("bin is on the car, but cannot reach output %d,%d" % OUTPUT)
+                return False
+            say("feeling for the drop point")   # depth there is whatever a
+            if not seq("P"):                    # human has left behind
+                return False
+            say("lift down")                    # set it down where it stopped
+            if not seq("d"):
+                return False
+            say("car home")
+            if not seq("g"):
                 return False
             store = slots.load()         # cleared only once it is really out
             store.pop(got_key or key, None)
             slots.save(store)
-            say("retrieved %s - on the car at staging" % barcode)
+            say("retrieved %s - dropped at output %d,%d" % ((barcode,) + OUTPUT))
             return True
 
         # a blocker: put it anywhere but this lane, then come back for the target
@@ -412,6 +429,8 @@ def dispatch(carriages, active, line, say=print):
                                      report=lambda l: say("  " + l))
         elif cmd == "read":       # depth 1 + scan the carried bin's label
             carpark.run_sequence(uart, "R", report=lambda l: say("  " + l))
+        elif cmd == "place":      # creep in until the carried bin is stopped
+            carpark.run_sequence(uart, "P", report=lambda l: say("  " + l))
         elif cmd == "store":      # full put-away of the bin at staging
             target = (slots.key(int(parts[1]), int(parts[2]), int(parts[3]))
                       if len(parts) == 4 else None)

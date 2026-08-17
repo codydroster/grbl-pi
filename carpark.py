@@ -135,6 +135,8 @@ TIMEOUTS = {
     "t": 45.0,                         # driveToBin + both lifts + driveToHome
     "1": 20.0, "2": 20.0, "3": 20.0,   # driveToDepth, 15s
     "R": 25.0,                         # depth 1 (15s) + the rest of a 3s scan
+    "P": 45.0,                         # creeps the whole lane feeling for the
+                                       # drop point, firmware allows 40s
 }
 DEFAULT_TIMEOUT = 30.0
 

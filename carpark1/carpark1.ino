@@ -108,6 +108,24 @@ const uint32_t DEPTH_SETTLE_MS = 80;     // pause after braking, before measurin
 // dropped reads into a timeout. carpark.TIMEOUTS on the Pi must stay above this.
 const uint32_t DEPTH_TIMEOUT_MS = 15000; // safety: give up on a depth move
 
+// DROPPING A BIN AT AN UNKNOWN DEPTH (the output lane). We cannot address a
+// depth here: how many bins are already sitting there is whatever a human left,
+// so the car drives in until the bin it is carrying MEETS something - the back
+// of the lane, or a bin already parked - and drops it right there.
+// Detection is the rangefinder: it ranges off the carried bin, so while the car
+// advances the reading grows by roughly a creep-step each time, and the moment
+// the bin is stopped the reading stops growing. DEPTH_STALL_MM / DEPTH_MAX_STILL
+// are reused for that - "advanced less than 5mm, three readings running".
+// THE WHOLE APPROACH IS AT CREEP SPEED, deliberately. There is no safe distance
+// to run in fast: a full output lane can have a bin as shallow as depth 1, and
+// the impact would land at DRIVE_SPEED. Slow all the way is the price of not
+// knowing what is in there. Worst case is the full lane at ~22mm/s, about 27s,
+// hence the much longer timeout. If that is too slow, the knobs are DROP_SPEED
+// (measure it first with "car AF<speed> 800") or a fast run in to a depth you
+// are willing to declare always clear.
+const int      DROP_SPEED = DEPTH_CREEP_SPEED;
+const uint32_t DROP_TIMEOUT_MS = 40000;
+
 // Rangefinder: laser distance module on Serial4 (RX4 pin 16 / TX4 pin 17),
 // pointed down the lane at the car - reads how deep the car has driven in.
 // AA-frame hex protocol (seller doc): checksum = sum of bytes after the 0xAA
@@ -310,6 +328,53 @@ bool driveToBin() {
   return false;
 }
 
+// Creep in until the carried bin stops advancing - it has met the back of the
+// lane or a bin already parked there - and stop on the spot so it can be set
+// down. For the output lane, where what is already in there is unknown.
+// Never goes deeper than the deepest taught slot, so an empty lane still stops.
+// Returns false only if it never got a usable reading or ran out of time; a
+// blocked bin IS the success case here.
+bool driveUntilBlocked() {
+  uint32_t t0 = millis();
+  int misses = 0, still = 0, lastD = -1;
+  carSpeed('F', DROP_SPEED);
+  while (millis() - t0 < DROP_TIMEOUT_MS) {
+    int d = readDistanceMM();                  // car keeps creeping through this
+    if (d < 0) {
+      if (++misses >= DEPTH_MAX_MISSES) {
+        car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+        say("lost the rangefinder while feeling for the drop point");
+        return false;
+      }
+      continue;
+    }
+    misses = 0;
+    Serial1.print("c "); Serial1.println(d);
+    Serial.print("c ");  Serial.println(d);
+
+    if (d >= DEPTH_MM[2]) {                    // empty lane - stop at the back
+      car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+      say("reached the back of the lane");
+      return true;
+    }
+    // Advancing by less than a creep-step means the bin has met something.
+    if (lastD >= 0 && (d - lastD) < DEPTH_STALL_MM) {
+      if (++still >= DEPTH_MAX_STILL) {
+        car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+        Serial1.print("bin stopped at "); Serial1.println(d);
+        Serial.print("bin stopped at ");  Serial.println(d);
+        return true;
+      }
+    } else {
+      still = 0;
+    }
+    lastD = d;
+  }
+  car1cmd("AB"); car1cmd("AS");
+  say("timed out feeling for the drop point");
+  return false;
+}
+
 // Drive the car to a measured depth in the lane. ONE timed burst at DRIVE_SPEED
 // covers the bulk of the distance, aiming at the near edge of the creep zone,
 // then the car creeps at DEPTH_CREEP_SPEED with the rangefinder closing the
@@ -455,6 +520,8 @@ void locateBin() {
 //          Never scans - a depth-1 move is often just shelving a bin there.
 //   R      drive to depth 1 AND read the carried bin's label, arming the
 //          scanner on the way in -> "BC <code|->" then READ DONE/FAIL
+//   P      place: creep in until the carried bin meets whatever is already in
+//          the lane (or the back of it) and stop there, for an unknown depth
 //   m      one rangefinder reading -> "DIST <mm>" (-1 = no reading)
 //   q      last scanned barcode -> "BC <code>" ("-" = none yet)
 //   Q      trigger a fresh scan, wait for it, -> "BC <code|->"
@@ -553,6 +620,9 @@ void handleCommand(Stream &port) {
     // caller asks for it with 'R'.
     say(driveToDepth(DEPTH_MM[depth - 1], DEPTH_TOL_MM, false) ? "DEPTH DONE"
                                                                : "DEPTH FAIL");
+  } else if (c == 'P') {                // place: creep in until the bin is stopped
+    say("PLACE START");
+    say(driveUntilBlocked() ? "PLACE DONE" : "PLACE FAIL");
   } else if (c == 'R') {                // depth 1 AND read the carried label
     say("READ START");
     scanArmedAt = 0;
