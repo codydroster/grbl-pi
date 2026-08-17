@@ -47,7 +47,9 @@ HELP = """commands:
   get BARCODE   fetch that stored bin and bring it back to staging
   slots         print barcode->slot assignments and the next free slot
   depth N       drive the car to taught depth N (1=closest, 2, 3=deepest).
-                Depth 1 is also where the scanner reads a carried bin
+                Never scans - use 'read' for that
+  read          drive to depth 1 AND scan the carried bin's label, arming the
+                scanner on the way in. What store/get use to identify a bin
   dist          car depth in the lane (mm) from carpark's rangefinder
   scan          trigger the barcode scanner and report what it reads
   laser <hex>   hex bytes to the rangefinder, reply shown as hex
@@ -80,8 +82,8 @@ Teensy's USB serial monitor; the shell equivalent is in brackets.
   t       retrieve: in, grab bin, lift, back out home   [ret]
   l       locate: in, stop at the bin, no lift/return   [locate]
   g       go home: reverse until docked                 [gohome]
-  1 2 3   drive to taught depth 1/2/3 (1 = closest;     [depth N]
-          depth 1 is also the scanner read position)
+  1 2 3   drive to taught depth 1/2/3 (never scans)     [depth N]
+  R       depth 1 AND read the label -> "BC <code|->"   [read]
   m       one rangefinder reading -> "DIST <mm>"        [dist]
   Q       fresh scan, waits for it -> "BC <code|->"     [scan]
   q       last barcode already seen -> "BC <code>"      [-]
@@ -92,7 +94,7 @@ Teensy's USB serial monitor; the shell equivalent is in brackets.
   >...    forward the rest of the line to the car board [car <cmd>]
   <...    hex bytes straight to the rangefinder         [laser <hex>]
 
-Sequences (t l g 1 2 3) stream progress lines and end in DONE or FAIL.
+Sequences (t l g 1 2 3 R) stream progress lines and end in DONE or FAIL.
 Depth moves print "d <mm>" while running in, then "c <mm>" while creeping."""
 
 
@@ -193,8 +195,8 @@ def store_bin(carriages, active, say, target=None):
     if not seq("u"):
         return False
 
-    say("presenting to scanner")     # depth 1 is the scanner's read position
-    if not seq("1"):                 # which also scans on the way in
+    say("presenting to scanner")     # 'R' = depth 1 AND scan on the way in
+    if not seq("R"):
         return False
     code = carpark.read_barcode(uart, fresh=False)
     if code is None:
@@ -302,8 +304,8 @@ def retrieve_bin(carriages, active, say, barcode):
         say("lift up")
         if not seq("u"):
             return False
-        say("reading label")             # depth 1 = scanner position; bin
-        if not seq("1"):                 # aboard, so distance works again
+        say("reading label")             # 'R' = depth 1 AND scan; bin is
+        if not seq("R"):                 # aboard, so distance works again
             return False
         got = carpark.read_barcode(uart, fresh=False)
         if got is None:
@@ -408,6 +410,8 @@ def dispatch(carriages, active, line, say=print):
             else:
                 carpark.run_sequence(uart, str(depth),
                                      report=lambda l: say("  " + l))
+        elif cmd == "read":       # depth 1 + scan the carried bin's label
+            carpark.run_sequence(uart, "R", report=lambda l: say("  " + l))
         elif cmd == "store":      # full put-away of the bin at staging
             target = (slots.key(int(parts[1]), int(parts[2]), int(parts[3]))
                       if len(parts) == 4 else None)

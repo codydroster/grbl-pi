@@ -452,7 +452,9 @@ void locateBin() {
 //   g      go home: reverse until docked
 //   h/p/a/c  report home sensor / bin sensor / alignment sensor / current
 //   1/2/3  drive the car to that taught depth in the lane (1 = closest).
-//          Depth 1 doubles as the scanner read position.
+//          Never scans - a depth-1 move is often just shelving a bin there.
+//   R      drive to depth 1 AND read the carried bin's label, arming the
+//          scanner on the way in -> "BC <code|->" then READ DONE/FAIL
 //   m      one rangefinder reading -> "DIST <mm>" (-1 = no reading)
 //   q      last scanned barcode -> "BC <code>" ("-" = none yet)
 //   Q      trigger a fresh scan, wait for it, -> "BC <code|->"
@@ -545,21 +547,29 @@ void handleCommand(Stream &port) {
   } else if (c >= '1' && c <= '3') {    // drive the car to taught depth 1/2/3
     int depth = c - '0';
     say("DEPTH START");
+    // NO SCANNING HERE. A depth-1 move is just as likely to be SHELVING a bin
+    // at depth 1 as presenting one to be read, and firing the scanner then
+    // would leave a stale or wrong code in lastBarcode. Reading is opt-in: the
+    // caller asks for it with 'R'.
+    say(driveToDepth(DEPTH_MM[depth - 1], DEPTH_TOL_MM, false) ? "DEPTH DONE"
+                                                               : "DEPTH FAIL");
+  } else if (c == 'R') {                // depth 1 AND read the carried label
+    say("READ START");
     scanArmedAt = 0;
-    // Depth 1 is the scanner's read position, so a depth-1 move also reads the
-    // label of whatever the car is carrying - the scanner is armed part way in
-    // (see SCAN_ARM_MM) so it is usually decoded by the time the car parks.
-    bool ok = driveToDepth(DEPTH_MM[depth - 1], DEPTH_TOL_MM, depth == 1);
+    // Same move as '1', but the scanner is armed on the way in once the bin is
+    // within SCAN_ARM_MM, so decoding overlaps the creep rather than following
+    // it. This is what the store and retrieve sequences use to identify a bin.
+    bool ok = driveToDepth(DEPTH_MM[0], DEPTH_TOL_MM, true);
     if (scanArmedAt) {
       // Let the scan run out the rest of ITS window, not a fresh one - most of
       // it has already elapsed during the move, which is the whole point.
       while (millis() - scanArmedAt < SCAN_WAIT_MS && !lastBarcode[0]) pump();
       scannerCmd("SLEEP");
-      // Before the terminal line: the Pi stops reading at the first DONE/FAIL.
-      Serial1.print("BC "); Serial1.println(lastBarcode[0] ? lastBarcode : "-");
-      Serial.print("BC ");  Serial.println(lastBarcode[0] ? lastBarcode : "-");
     }
-    say(ok ? "DEPTH DONE" : "DEPTH FAIL");
+    // Before the terminal line: the Pi stops reading at the first DONE/FAIL.
+    Serial1.print("BC "); Serial1.println(lastBarcode[0] ? lastBarcode : "-");
+    Serial.print("BC ");  Serial.println(lastBarcode[0] ? lastBarcode : "-");
+    say(ok ? "READ DONE" : "READ FAIL");
   } else if (c == 'q') {
     port.print("BC "); port.println(lastBarcode[0] ? lastBarcode : "-");
   } else if (c == 'Q') {                // fresh scan, triggered over serial
