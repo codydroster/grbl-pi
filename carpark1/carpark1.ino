@@ -55,9 +55,22 @@ const int      BARCODE_TOL_MM = 20;      // readable band extends this far past
 // reading takes ~670ms round trip, during which the car covers ~86mm at
 // DRIVE_SPEED, so a pure read-decide-drive loop can only see the world in 86mm
 // steps and cannot hit a +/-10mm window no matter how it is tuned.
-// Measured by the user: ~620mm of rack in ~4.8s at DRIVE_SPEED, and the figure
-// does NOT change with a loaded bin. Re-measure if the gearing or speed change.
-const int      DRIVE_MM_PER_S = 129;
+// Calibrated with the burst tool ("car AF250 <ms>", distance read before and
+// after) at 800/200/100ms -> 112/23/11mm. Least squares over those three:
+//
+//     travel_mm = 146 * seconds - 4.8
+//
+// so 146mm/s with a ~5mm LOSS per burst while the car comes up to speed. The
+// offset is negative, i.e. ramp-up, not brake overshoot - the gearing really
+// does stop dead. That is the safe direction: short bursts fall short rather
+// than jumping past, so small corrections cannot oscillate. Below ~33ms a burst
+// moves nothing at all, which is the stiction floor DEPTH_MIN_BURST_MS clears.
+// Load does not change these. Re-run the three bursts if gearing or speed do.
+// (An earlier hand-timed ~620mm/~4.8s suggested 129mm/s; these instrument
+// -measured bursts supersede it, and they measure the right thing - distance
+// per COMMANDED burst, which is exactly what this loop asks for.)
+const int      DRIVE_MM_PER_S = 146;
+const int      DEPTH_RAMP_MM  = 5;       // add back what the ramp-up costs
 // Aim deliberately SHORT of the target on every pass, so the car always closes
 // in from one side instead of overshooting and hunting back and forth.
 const int      DEPTH_APPROACH_PCT = 85;
@@ -317,8 +330,10 @@ bool driveToDepth(int targetMm, int tolMm) {
     }
     lastD = d;
 
-    // distance -> time. Aim short by DEPTH_APPROACH_PCT so we never overshoot.
-    uint32_t ms = (uint32_t)abs(err) * DEPTH_APPROACH_PCT * 10 / DRIVE_MM_PER_S;
+    // distance -> time, adding back the ramp-up loss. Aim short by
+    // DEPTH_APPROACH_PCT on top, so we always close in from one side.
+    uint32_t want = (uint32_t)abs(err) * DEPTH_APPROACH_PCT / 100;
+    uint32_t ms = (want + DEPTH_RAMP_MM) * 1000 / DRIVE_MM_PER_S;
     if (ms < DEPTH_MIN_BURST_MS) ms = DEPTH_MIN_BURST_MS;
     ms += boost;
 
