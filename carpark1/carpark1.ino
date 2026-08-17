@@ -49,12 +49,23 @@ const int DEPTH_MM[3] = {235, 430, 630};
 const int      BARCODE_MM     = 200;     // ideal read distance
 const int      BARCODE_TOL_MM = 20;      // readable band extends this far past
                                          // BARCODE_MM and past depth 1
-// TIMED POSITIONING. The drive is self-locking - cutting power stops the car
-// dead, no coast - so distance really is speed x time, and a computed burst
-// positions far more finely than closed-loop laser control ever could. A laser
-// reading takes ~670ms round trip, during which the car covers ~86mm at
-// DRIVE_SPEED, so a pure read-decide-drive loop can only see the world in 86mm
-// steps and cannot hit a +/-10mm window no matter how it is tuned.
+// TWO-PHASE POSITIONING: timed run in, laser-guided creep to finish.
+//
+// PHASE 1 covers the distance blind, at DRIVE_SPEED, on the clock. The drive is
+// self-locking - cutting power stops the car dead, no coast - so distance
+// really is speed x time. It aims at the near edge of the creep zone, not at
+// the target, so it always hands over short.
+// PHASE 2 creeps at DEPTH_CREEP_SPEED with the rangefinder closing the loop,
+// and stops on the first reading that is inside tolerance OR past the target.
+//
+// Why not close the loop the whole way: a reading takes ~670ms round trip, and
+// the car keeps moving throughout, so the finest a continuous loop can resolve
+// is one reading's worth of travel - 86mm at DRIVE_SPEED, which cannot hit a
+// +/-10mm window at all. Creeping shrinks that number instead of fighting it.
+// THE CROSSING TEST IN PHASE 2 IS LOad-BEARING for the same reason: if the
+// creep still covers more than the window between two readings, the car would
+// step clean over it and hunt back and forth to the timeout. Stopping the
+// moment a reading says "at or past" is what makes the phase terminate.
 // Calibrated with the burst tool ("car AF250 <ms>", distance read before and
 // after) at 800/200/100ms -> 112/23/11mm. Least squares over those three:
 //
@@ -71,9 +82,19 @@ const int      BARCODE_TOL_MM = 20;      // readable band extends this far past
 // per COMMANDED burst, which is exactly what this loop asks for.)
 const int      DRIVE_MM_PER_S = 146;
 const int      DEPTH_RAMP_MM  = 5;       // add back what the ramp-up costs
-// Aim deliberately SHORT of the target on every pass, so the car always closes
-// in from one side instead of overshooting and hunting back and forth.
-const int      DEPTH_APPROACH_PCT = 85;
+// Phase 1 aims to hand over this far short of the target; phase 2 creeps the
+// rest under laser guidance. Wide enough to absorb phase 1's timing error (the
+// fit is good to a few mm, so 40 is generous), narrow enough that the slow
+// phase stays short.
+const int      DEPTH_CREEP_ZONE_MM = 40;
+// UNMEASURED: 146mm/s is PWM 250; naive scaling puts PWM 80 near 47mm/s, but
+// PWM-to-speed is very non-linear near stall - PWM 50 stalled outright and 110
+// was the known-good creep elsewhere. This has to move the car AND cover less
+// than 2 x DEPTH_TOL_MM per ~670ms reading (i.e. stay under ~30mm/s) for the
+// window to be reachable; the crossing test keeps it terminating either way.
+// Measure it: "car AF80 800" and read the distance before and after.
+const int      DEPTH_CREEP_SPEED = 80;
+const int      DEPTH_MAX_STILL = 3;      // creep readings with no movement = stalled
 // A burst shorter than this may not break stiction at all. Its travel must stay
 // under 2 x DEPTH_TOL_MM (here ~13mm vs a 20mm window), or a small correction
 // would jump clean over the target and oscillate.
@@ -286,19 +307,21 @@ bool driveToBin() {
   return false;
 }
 
-// Drive the car to a measured depth in the lane: measure stopped, drive a
-// computed burst, stop, measure again. Two or three passes land inside the
-// tolerance, each aiming DEPTH_APPROACH_PCT of the way so the car converges
-// from one side rather than hunting.
-//
-// EVERY READING IS TAKEN WITH THE CAR STOPPED, which is the condition the
-// rangefinder is reliable in - misses happen while it is moving. That is the
-// real prize here, not just the finer positioning.
+// Drive the car to a measured depth in the lane. Phase 1 runs in on the clock
+// at DRIVE_SPEED, stopping to measure between bursts, until it is within
+// DEPTH_CREEP_ZONE_MM. Phase 2 then creeps continuously at DEPTH_CREEP_SPEED
+// with the rangefinder closing the loop, and brakes on the first reading that
+// is inside tolerance or past the target.
+// Progress lines: "d <mm>" while running in, "c <mm>" while creeping.
 bool driveToDepth(int targetMm, int tolMm) {
   uint32_t t0 = millis();
   int misses = 0;
   int lastD = -1;                                // reading before the last burst
   uint32_t boost = 0;                            // extra burst time when nothing moved
+  int entryErr = 0;                              // error handed to phase 2 (0 = never got there)
+
+  // ---- Phase 1: timed run in, measuring between bursts (car stopped to read,
+  // which is the condition the rangefinder is reliable in) ----
   while (millis() - t0 < DEPTH_TIMEOUT_MS) {
     int d = readDistanceMM();                    // car is stopped here, always
     if (d < 0) {
@@ -316,6 +339,7 @@ bool driveToDepth(int targetMm, int tolMm) {
     Serial.print("d ");  Serial.println(d);
     int err = targetMm - d;                      // + = deeper, - = too deep
     if (abs(err) <= tolMm) return true;          // already stopped - just done
+    if (abs(err) <= DEPTH_CREEP_ZONE_MM) { entryErr = err; break; }   // creep it
 
     // Did the last burst actually move the car? If not, stiction won: lengthen
     // the next one rather than sitting here buzzing at it forever.
@@ -330,9 +354,9 @@ bool driveToDepth(int targetMm, int tolMm) {
     }
     lastD = d;
 
-    // distance -> time, adding back the ramp-up loss. Aim short by
-    // DEPTH_APPROACH_PCT on top, so we always close in from one side.
-    uint32_t want = (uint32_t)abs(err) * DEPTH_APPROACH_PCT / 100;
+    // distance -> time, adding back the ramp-up loss. Aim at the near edge of
+    // the creep zone rather than the target, so phase 1 always hands over short.
+    uint32_t want = (uint32_t)(abs(err) - DEPTH_CREEP_ZONE_MM);
     uint32_t ms = (want + DEPTH_RAMP_MM) * 1000 / DRIVE_MM_PER_S;
     if (ms < DEPTH_MIN_BURST_MS) ms = DEPTH_MIN_BURST_MS;
     ms += boost;
@@ -343,7 +367,55 @@ bool driveToDepth(int targetMm, int tolMm) {
     waitPumping(DEPTH_SETTLE_MS);
     car1cmd("AS");
   }
+  if (entryErr == 0) {                           // never reached the creep zone
+    car1cmd("AB"); car1cmd("AS");
+    say("timed out running in to the creep zone");
+    return false;
+  }
+
+  // ---- Phase 2: creep continuously, laser closing the loop ----
+  int still = 0;
+  misses = 0;
+  lastD = -1;
+  carSpeed(entryErr > 0 ? 'F' : 'R', DEPTH_CREEP_SPEED);
+  while (millis() - t0 < DEPTH_TIMEOUT_MS) {
+    int d = readDistanceMM();                    // the car keeps moving through this
+    if (d < 0) {
+      if (++misses >= DEPTH_MAX_MISSES) {
+        car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+        say("lost the rangefinder during the creep");
+        return false;
+      }
+      continue;
+    }
+    misses = 0;
+    Serial1.print("c "); Serial1.println(d);
+    Serial.print("c ");  Serial.println(d);
+    int err = targetMm - d;
+
+    // Inside tolerance, or stepped past the target. The crossing half matters:
+    // the car moves for the whole of a reading, so it can pass clean over the
+    // window between two of them - without this it would hunt to the timeout.
+    if (abs(err) <= tolMm || (err > 0) != (entryErr > 0)) {
+      car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+      return true;
+    }
+
+    // Creeping but not actually moving: DEPTH_CREEP_SPEED is below what this
+    // car needs to break stiction. Say so rather than grinding to the timeout.
+    if (lastD >= 0 && abs(d - lastD) < DEPTH_STALL_MM) {
+      if (++still >= DEPTH_MAX_STILL) {
+        car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+        say("creep speed too low to move the car - raise DEPTH_CREEP_SPEED");
+        return false;
+      }
+    } else {
+      still = 0;
+    }
+    lastD = d;
+  }
   car1cmd("AB"); car1cmd("AS");
+  say("timed out during the creep");
   return false;
 }
 
