@@ -147,9 +147,22 @@ STAGING = (0, 0)   # bins to be put away arrive here; column 0 is not storage
 
 
 def rack_lanes():
-    # storage lanes in fill order - column 0 is the staging area, not a slot
+    """Storage lanes in fill order - column 0 is the staging area, not a slot.
+
+    ROW-MAJOR: fill all of row 0 across the columns, then row 1, and so on.
+    Columns are X, rows are Y, and staging (0,0) sits at row 0's exact Y - so
+    filling a row first means the carriage runs straight across at the height it
+    is already at, instead of climbing a whole column and coming back down for
+    every bin. Sorting by (col, row) - the obvious reading of the key - gives
+    the column-major order, which is why this reverses them.
+    """
     keys = [k for k in positions.load() if not k.startswith("0,")]
-    return sorted(keys, key=lambda k: tuple(int(v) for v in k.split(",")))
+
+    def row_then_col(k):
+        col, row = (int(v) for v in k.split(","))
+        return (row, col)
+
+    return sorted(keys, key=row_then_col)
 
 
 def store_bin(carriages, active, say, target=None):
