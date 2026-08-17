@@ -93,6 +93,12 @@ const int      DEPTH_CREEP_ZONE_MM = 40;
 // Measure it: "car AF80 800" and read the distance before and after.
 const int      DEPTH_CREEP_SPEED = 80;
 const int      DEPTH_MAX_STILL = 3;      // creep readings with no movement = stalled
+// A DEPTH MOVE MUST NEVER PUSH. If the carried bin meets a bin already in the
+// lane it stops and fails - dropping it in the wrong place, or shoving the
+// stack deeper, are both worse than an abort. Only the output-lane drop ('P')
+// leans on what it meets, because there that IS the measurement. Kept low so
+// the car spends barely over a second leaning on anything before giving up.
+const int      DEPTH_BLOCKED_READS = 2;
 // A burst shorter than this may not break stiction at all. Its travel must stay
 // under 2 x DEPTH_TOL_MM (here ~13mm vs a 20mm window), or a small correction
 // would jump clean over the target and oscillate.
@@ -123,7 +129,7 @@ const uint32_t DEPTH_TIMEOUT_MS = 15000; // safety: give up on a depth move
 // hence the much longer timeout. If that is too slow, the knobs are DROP_SPEED
 // (measure it first with "car AF<speed> 800") or a fast run in to a depth you
 // are willing to declare always clear.
-const int      DROP_SPEED = DEPTH_CREEP_SPEED;
+const int      DROP_SPEED = 150;
 const uint32_t DROP_TIMEOUT_MS = 40000;
 
 // Rangefinder: laser distance module on Serial4 (RX4 pin 16 / TX4 pin 17),
@@ -390,7 +396,7 @@ bool driveUntilBlocked() {
 bool driveToDepth(int targetMm, int tolMm, bool armScan) {
   uint32_t t0 = millis();
   int misses = 0;
-  int lastD = -1;
+  int lastAbsErr = -1;                           // |error| at the previous reading
   int still = 0;
   int entryErr = 0;                              // error when the creep started
   bool creeping = false;
@@ -444,7 +450,7 @@ bool driveToDepth(int targetMm, int tolMm, bool armScan) {
       // very first creep reading and stops.
       creeping = true;
       entryErr = err;
-      lastD = -1;                                // the burst moved us; no stall compare
+      lastAbsErr = -1;                           // the burst moved us; no stall compare
       carSpeed(err > 0 ? 'F' : 'R', DEPTH_CREEP_SPEED);
       continue;
     }
@@ -456,18 +462,25 @@ bool driveToDepth(int targetMm, int tolMm, bool armScan) {
       return true;
     }
 
-    // Creeping but not actually moving: DEPTH_CREEP_SPEED is below what this
-    // car needs to break stiction. Say so rather than grinding to the timeout.
-    if (lastD >= 0 && abs(d - lastD) < DEPTH_STALL_MM) {
-      if (++still >= DEPTH_MAX_STILL) {
+    // NOT CLOSING ON THE TARGET: either a bin already in the lane is in the
+    // way, or the creep is too slow to move the car. Either way STOP - a depth
+    // move must not push (see DEPTH_BLOCKED_READS).
+    // Tested on the ERROR SHRINKING, not on the raw reading changing. With
+    // abs(d - lastD) a few mm of laser jitter against a jammed bin read as
+    // movement, reset the counter, and let the car lean on the stack until the
+    // timeout - which is exactly the pushing this is meant to prevent.
+    if (lastAbsErr >= 0 && lastAbsErr - abs(err) < DEPTH_STALL_MM) {
+      if (++still >= DEPTH_BLOCKED_READS) {
         car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
-        say("creep speed too low to move the car - raise DEPTH_CREEP_SPEED");
+        Serial1.print("stopped short at "); Serial1.println(d);
+        Serial.print("stopped short at ");  Serial.println(d);
+        say("bin is not reaching the target - something is in the lane");
         return false;
       }
     } else {
       still = 0;
     }
-    lastD = d;
+    lastAbsErr = abs(err);
   }
   car1cmd("AB"); car1cmd("AS");
   say("timed out during the creep");
