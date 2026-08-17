@@ -42,13 +42,11 @@ const uint32_t DRIVE_TIMEOUT_MS = 10000; // safety: give up on a drive after thi
 // IMPORTANT: the rangefinder ranges off the BIN, not the car - an empty car
 // gives no reading at all. So depth moves are only valid with a bin aboard
 // (placing one). Going in empty to collect one must use driveToBin instead.
-const int DEPTH_MM[3] = {235, 430, 630};
-// Where the car sits for the fixed scanner to read the label on a bin it is
-// carrying. The scanner's usable window is wide enough to cover depth 1 too, so
-// a bin just picked from the front of a lane can be read without moving at all.
-const int      BARCODE_MM     = 200;     // ideal read distance
-const int      BARCODE_TOL_MM = 20;      // readable band extends this far past
-                                         // BARCODE_MM and past depth 1
+const int DEPTH_MM[3] = {230, 430, 630};
+// DEPTH 1 IS ALSO THE SCANNER POSITION. The fixed scanner's usable window
+// covers depth 1, so a bin being carried is presented for reading by driving to
+// depth 1 - there is no separate read position and no 'r' command. Sequences
+// that need a label read send '1' like any other depth move.
 // TWO-PHASE POSITIONING: timed run in, laser-guided creep to finish.
 //
 // PHASE 1 covers the distance blind, at DRIVE_SPEED, on the clock. The drive is
@@ -148,6 +146,11 @@ bool binSeen = false;     // that value is below BIN_LEVEL
 // waits on it - a received barcode is the real success signal.
 const uint32_t SCAN_BAUD    = 115200;
 const uint32_t SCAN_WAIT_MS = 3000;   // how long a triggered scan may hunt
+// Trigger the scanner DURING a depth-1 move, as soon as the bin is this close,
+// so decoding overlaps the creep instead of starting after it. The scanner
+// reads from ~25-400mm, so it can see the label well before the car arrives.
+const int      SCAN_ARM_MM  = 250;
+uint32_t scanArmedAt = 0;             // millis when armed mid-move, 0 = not armed
 bool scanAck = false;                 // set by pump() if the scanner ever ACKs
 char lastBarcode[32] = "";
 
@@ -307,92 +310,79 @@ bool driveToBin() {
   return false;
 }
 
-// Drive the car to a measured depth in the lane. Phase 1 runs in on the clock
-// at DRIVE_SPEED, stopping to measure between bursts, until it is within
-// DEPTH_CREEP_ZONE_MM. Phase 2 then creeps continuously at DEPTH_CREEP_SPEED
-// with the rangefinder closing the loop, and brakes on the first reading that
-// is inside tolerance or past the target.
-// Progress lines: "d <mm>" while running in, "c <mm>" while creeping.
-bool driveToDepth(int targetMm, int tolMm) {
+// Drive the car to a measured depth in the lane. ONE timed burst at DRIVE_SPEED
+// covers the bulk of the distance, aiming at the near edge of the creep zone,
+// then the car creeps at DEPTH_CREEP_SPEED with the rangefinder closing the
+// loop until it is inside tolerance or past the target.
+//
+// Deliberately a SINGLE burst, not a loop of them. The timing model overshoots
+// its welcome on long runs - a measured 1103ms burst travelled 140mm where the
+// model said 156 (127mm/s effective against the 146 the short bursts fit), so a
+// looping phase 1 just fired a second little burst to make up the difference.
+// The creep absorbs that error perfectly well and is the part that actually
+// knows where the car is, so there is nothing for a second burst to add.
+// Progress lines: "d <mm>" for the run in, "c <mm>" while creeping.
+bool driveToDepth(int targetMm, int tolMm, bool armScan) {
   uint32_t t0 = millis();
   int misses = 0;
-  int lastD = -1;                                // reading before the last burst
-  uint32_t boost = 0;                            // extra burst time when nothing moved
-  int entryErr = 0;                              // error handed to phase 2 (0 = never got there)
+  int lastD = -1;
+  int still = 0;
+  int entryErr = 0;                              // error when the creep started
+  bool creeping = false;
+  bool ranIn = false;                            // the one timed burst is done
 
-  // ---- Phase 1: timed run in, measuring between bursts (car stopped to read,
-  // which is the condition the rangefinder is reliable in) ----
   while (millis() - t0 < DEPTH_TIMEOUT_MS) {
-    int d = readDistanceMM();                    // car is stopped here, always
+    int d = readDistanceMM();
     if (d < 0) {
-      // A dropped frame is not a failure - ask again. The car is already
-      // stopped, so a miss costs time but no travel. (No DONE/FAIL in this
+      // A dropped frame is not a failure - ask again. (No DONE/FAIL in this
       // text - the Pi stops reading at the first line containing either.)
       if (++misses >= DEPTH_MAX_MISSES) {
-        say("no usable reading from the rangefinder");
+        if (creeping) { car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS"); }
+        say(creeping ? "lost the rangefinder during the creep"
+                     : "no usable reading from the rangefinder");
         return false;
       }
       continue;
     }
     misses = 0;
-    Serial1.print("d "); Serial1.println(d);     // progress, echoed by the Pi
-    Serial.print("d ");  Serial.println(d);
+    Serial1.print(creeping ? "c " : "d "); Serial1.println(d);
+    Serial.print(creeping ? "c " : "d ");  Serial.println(d);
     int err = targetMm - d;                      // + = deeper, - = too deep
-    if (abs(err) <= tolMm) return true;          // already stopped - just done
-    if (abs(err) <= DEPTH_CREEP_ZONE_MM) { entryErr = err; break; }   // creep it
 
-    // Did the last burst actually move the car? If not, stiction won: lengthen
-    // the next one rather than sitting here buzzing at it forever.
-    if (lastD >= 0 && abs(d - lastD) < DEPTH_STALL_MM) {
-      boost += DEPTH_BURST_BOOST_MS;
-      if (boost > DEPTH_MAX_BOOST_MS) {
-        say("car is not moving - stiction, an obstruction, or a jammed bin");
-        return false;
-      }
-    } else {
-      boost = 0;
+    // Close enough for the scanner to see the label: start it decoding now,
+    // while the car is still moving, rather than after it parks. Done before
+    // the arrival test below so a move that is already in tolerance still arms.
+    if (armScan && !scanArmedAt && d < SCAN_ARM_MM) {
+      lastBarcode[0] = 0;
+      scannerCmd("SCAN");
+      scanArmedAt = millis();
     }
-    lastD = d;
 
-    // distance -> time, adding back the ramp-up loss. Aim at the near edge of
-    // the creep zone rather than the target, so phase 1 always hands over short.
-    uint32_t want = (uint32_t)(abs(err) - DEPTH_CREEP_ZONE_MM);
-    uint32_t ms = (want + DEPTH_RAMP_MM) * 1000 / DRIVE_MM_PER_S;
-    if (ms < DEPTH_MIN_BURST_MS) ms = DEPTH_MIN_BURST_MS;
-    ms += boost;
-
-    carSpeed(err > 0 ? 'F' : 'R', DRIVE_SPEED);
-    waitPumping(ms);
-    car1cmd("AB");                               // brake, settle, then release
-    waitPumping(DEPTH_SETTLE_MS);
-    car1cmd("AS");
-  }
-  if (entryErr == 0) {                           // never reached the creep zone
-    car1cmd("AB"); car1cmd("AS");
-    say("timed out running in to the creep zone");
-    return false;
-  }
-
-  // ---- Phase 2: creep continuously, laser closing the loop ----
-  int still = 0;
-  misses = 0;
-  lastD = -1;
-  carSpeed(entryErr > 0 ? 'F' : 'R', DEPTH_CREEP_SPEED);
-  while (millis() - t0 < DEPTH_TIMEOUT_MS) {
-    int d = readDistanceMM();                    // the car keeps moving through this
-    if (d < 0) {
-      if (++misses >= DEPTH_MAX_MISSES) {
-        car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
-        say("lost the rangefinder during the creep");
-        return false;
+    if (!creeping) {
+      if (abs(err) <= tolMm) return true;        // already there, still stopped
+      if (!ranIn && abs(err) > DEPTH_CREEP_ZONE_MM) {
+        ranIn = true;
+        // distance -> time, adding back the ramp-up loss. Aim at the near edge
+        // of the creep zone, so this always hands over short of the target.
+        uint32_t want = (uint32_t)(abs(err) - DEPTH_CREEP_ZONE_MM);
+        uint32_t ms = (want + DEPTH_RAMP_MM) * 1000 / DRIVE_MM_PER_S;
+        if (ms < DEPTH_MIN_BURST_MS) ms = DEPTH_MIN_BURST_MS;
+        carSpeed(err > 0 ? 'F' : 'R', DRIVE_SPEED);
+        waitPumping(ms);
+        car1cmd("AB");                           // brake, settle, then release
+        waitPumping(DEPTH_SETTLE_MS);
+        car1cmd("AS");
       }
+      // Straight into the creep. entryErr keeps the sign from BEFORE the burst,
+      // which is still right because the burst always aims short - and if the
+      // model ever did overshoot, the crossing test below catches it on the
+      // very first creep reading and stops.
+      creeping = true;
+      entryErr = err;
+      lastD = -1;                                // the burst moved us; no stall compare
+      carSpeed(err > 0 ? 'F' : 'R', DEPTH_CREEP_SPEED);
       continue;
     }
-    misses = 0;
-    Serial1.print("c "); Serial1.println(d);
-    Serial.print("c ");  Serial.println(d);
-    int err = targetMm - d;
-
     // Inside tolerance, or stepped past the target. The crossing half matters:
     // the car moves for the whole of a reading, so it can pass clean over the
     // window between two of them - without this it would hunt to the timeout.
@@ -417,31 +407,6 @@ bool driveToDepth(int targetMm, int tolMm) {
   car1cmd("AB"); car1cmd("AS");
   say("timed out during the creep");
   return false;
-}
-
-// Put a carried bin where the scanner can read it. Anything from just short of
-// BARCODE_MM out to just past depth 1 reads fine, so if the car is already in
-// that band - which it is straight after locateBin - don't move at all. Saves a
-// move, and avoids nudging a bin that is already sitting correctly on the forks.
-bool driveToReadPos() {
-  const int lo = BARCODE_MM - BARCODE_TOL_MM;    // whole band the scanner reads
-  const int hi = DEPTH_MM[0] + BARCODE_TOL_MM;
-  int d = readDistanceMM();
-  // locateBin has just parked the car at a bin, so it is already about right -
-  // a missing reading is no reason to go driving. Scan from where we are.
-  if (d < 0) {
-    say("no usable distance - scanning from where we are");
-    return true;
-  }
-  if (d >= lo && d <= hi) {
-    Serial1.print("already readable at "); Serial1.println(d);
-    Serial.print("already readable at ");  Serial.println(d);
-    return true;
-  }
-  // Aim at the middle of the band with the BAND's tolerance, not the tight
-  // depth one. Anywhere in here reads, so there is nothing to be gained by
-  // converging harder - and a narrow window is what makes the car hunt.
-  return driveToDepth((lo + hi) / 2, (hi - lo) / 2);
 }
 
 // Reverse until the car is docked, easing off as it comes into range.
@@ -486,8 +451,8 @@ void locateBin() {
 //   l      locate bin: in, detect bin, stop (retrieve without the lift/return)
 //   g      go home: reverse until docked
 //   h/p/a/c  report home sensor / bin sensor / alignment sensor / current
-//   1/2/3  drive the car to that taught depth in the lane (1 = closest)
-//   r      drive to BARCODE_MM so the scanner can read a carried bin
+//   1/2/3  drive the car to that taught depth in the lane (1 = closest).
+//          Depth 1 doubles as the scanner read position.
 //   m      one rangefinder reading -> "DIST <mm>" (-1 = no reading)
 //   q      last scanned barcode -> "BC <code>" ("-" = none yet)
 //   Q      trigger a fresh scan, wait for it, -> "BC <code|->"
@@ -561,10 +526,6 @@ void handleCommand(Stream &port) {
   else if (c == 'd') liftDown();
   else if (c == 't') retrieve();
   else if (c == 'l') locateBin();       // retrieve's front half, no lift
-  else if (c == 'r') {                  // present a carried bin to the scanner
-    say("READPOS START");
-    say(driveToReadPos() ? "READPOS DONE" : "READPOS FAIL");
-  }
   else if (c == 'g') say(driveToHome() ? "HOME DONE" : "HOME FAIL");
   // --- reports ---
   else if (c == 'h') {
@@ -584,8 +545,21 @@ void handleCommand(Stream &port) {
   } else if (c >= '1' && c <= '3') {    // drive the car to taught depth 1/2/3
     int depth = c - '0';
     say("DEPTH START");
-    say(driveToDepth(DEPTH_MM[depth - 1], DEPTH_TOL_MM) ? "DEPTH DONE"
-                                                        : "DEPTH FAIL");
+    scanArmedAt = 0;
+    // Depth 1 is the scanner's read position, so a depth-1 move also reads the
+    // label of whatever the car is carrying - the scanner is armed part way in
+    // (see SCAN_ARM_MM) so it is usually decoded by the time the car parks.
+    bool ok = driveToDepth(DEPTH_MM[depth - 1], DEPTH_TOL_MM, depth == 1);
+    if (scanArmedAt) {
+      // Let the scan run out the rest of ITS window, not a fresh one - most of
+      // it has already elapsed during the move, which is the whole point.
+      while (millis() - scanArmedAt < SCAN_WAIT_MS && !lastBarcode[0]) pump();
+      scannerCmd("SLEEP");
+      // Before the terminal line: the Pi stops reading at the first DONE/FAIL.
+      Serial1.print("BC "); Serial1.println(lastBarcode[0] ? lastBarcode : "-");
+      Serial.print("BC ");  Serial.println(lastBarcode[0] ? lastBarcode : "-");
+    }
+    say(ok ? "DEPTH DONE" : "DEPTH FAIL");
   } else if (c == 'q') {
     port.print("BC "); port.println(lastBarcode[0] ? lastBarcode : "-");
   } else if (c == 'Q') {                // fresh scan, triggered over serial
