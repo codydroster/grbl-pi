@@ -1,3 +1,4 @@
+import re
 import sys
 
 import serial
@@ -35,6 +36,9 @@ HELP = """commands:
   positions     print all saved positions
   offset [X Y]  show or set this carriage's offset from carriage 1's frame
   car <cmd>     forward a debug command to the active carriage's car board
+  car <cmd> MS  same, but run it for MS milliseconds then brake and release
+                (e.g. 'car AF250 800'). Timed on carpark, so it measures the
+                same burst driveToDepth uses - this is the calibration tool
   u             lifts up   (carpark runs it, shows live mA)
   d             lifts down (carpark runs it, shows live mA)
   cur           spot current reading (mA) from carpark's INA219
@@ -369,7 +373,15 @@ def dispatch(carriages, active, line, say=print):
             say("carriage %d offset %s"
                 % (active, positions.load_offsets().get(str(active), [0, 0])))
         elif cmd == "car":
-            carpark.send_car(uart, "".join(parts[1:]), report=say)
+            # "car AF250 800" = run that for 800ms, then brake and release.
+            # Only a COMPLETE motor command followed by digits is read that way,
+            # so the old spaces-are-optional form ("car AF 250") still means AF250.
+            args = parts[1:]
+            ms = None
+            if (len(args) == 2 and args[1].isdigit()
+                    and re.match(r"^[A-Ca-c][FRfr]\d+$", args[0])):
+                args, ms = args[:1], int(args[1])
+            carpark.send_car(uart, "".join(args), ms=ms, report=say)
         elif cmd in ("u", "d", "ret", "gohome", "locate"):
             # high level: carpark owns the whole sequence, we just report
             carpark.run_sequence(uart, {"u": "u", "d": "d", "ret": "t",

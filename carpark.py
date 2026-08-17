@@ -5,15 +5,33 @@ import time
 # ('u'/'d'/'t'/'g'), or forwards a debug line to the car board with '>'.
 
 
-def send_car(uart, cmd, report=print):
-    # forward a debug command to the car board and report its ack
+def send_car(uart, cmd, ms=None, report=print):
+    """Forward a debug command to the car board and report its ack.
+
+    ms runs it as a timed burst: carpark drives for that long, then brakes and
+    releases, and answers "BURST <ms>ms" when it is done. The timing is done on
+    carpark rather than here on purpose - it is the calibration tool for
+    driveToDepth, so it walks the same path without the Pi link in the middle.
+    """
     uart.reset_input_buffer()
-    uart.write((">" + cmd + "\n").encode())
-    for _ in range(30):
+    uart.write((">" + cmd + (" %d" % ms if ms else "") + "\n").encode())
+    if not ms:
+        for _ in range(30):
+            reply = uart.readline().decode(errors="replace").strip()
+            if reply:
+                report(reply)
+                break
+        return
+    # burst: echo progress until carpark confirms the burst finished
+    deadline = time.time() + ms / 1000.0 + 5.0
+    while time.time() < deadline:
         reply = uart.readline().decode(errors="replace").strip()
-        if reply:
-            report(reply)
-            break
+        if not reply:
+            continue
+        report(reply)
+        if reply.startswith("BURST "):
+            return
+    report("no BURST confirmation - is carpark on the current firmware?")
 
 
 def drive(uart, cmd):

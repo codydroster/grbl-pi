@@ -404,18 +404,39 @@ void locateBin() {
 //   m      one rangefinder reading -> "DIST <mm>" (-1 = no reading)
 //   q      last scanned barcode -> "BC <code>" ("-" = none yet)
 //   Q      trigger a fresh scan, wait for it, -> "BC <code|->"
-//   >...\n forward the rest of the line to car1 (debug passthrough)
+//   >...\n forward the rest of the line to car1 (debug passthrough).
+//          An optional trailing ms runs it as a timed burst then brakes:
+//          ">AF250 800" = forward at 250 for 800ms. Replies "BURST <ms>ms".
 //   <...\n hex bytes to the rangefinder, echo its reply as hex (bring-up)
 void handleCommand(Stream &port) {
   char c = port.read();
-  if (c == '>') {                       // forward rest of line to car1 verbatim
-    char buf[32];
-    int n = port.readBytesUntil('\n', buf, sizeof(buf));
-    Serial.print(">> sent: ");
-    Serial.write(buf, n);
-    Serial.println();
-    Serial2.write(buf, n);
-    Serial2.write('\n');
+  if (c == '>') {                       // forward rest of line to car1
+    char buf[40];
+    int n = port.readBytesUntil('\n', buf, sizeof(buf) - 1);
+    buf[n] = 0;
+    while (n > 0 && (buf[n-1] == '\r' || buf[n-1] == ' ')) buf[--n] = 0;
+
+    // Optional trailing duration: ">AF250 800" drives for 800ms, then brakes
+    // and releases. TIMED HERE, not on the Pi: this is the calibration tool for
+    // driveToDepth's bursts, so it has to walk the same path - same waitPumping,
+    // same brake-settle-release - with no Pi link latency or host jitter in the
+    // middle. A Python sleep would measure a different thing.
+    uint32_t ms = 0;
+    char *sp = strchr(buf, ' ');
+    if (sp) { *sp = 0; ms = atoi(sp + 1); }
+
+    Serial.print(">> sent: "); Serial.println(buf);
+    Serial2.print(buf); Serial2.print('\n');
+
+    if (ms) {
+      waitPumping(ms);
+      char tail[4];
+      sprintf(tail, "%cB", buf[0]); car1cmd(tail);   // brake
+      waitPumping(DEPTH_SETTLE_MS);                  // same settle as driveToDepth
+      sprintf(tail, "%cS", buf[0]); car1cmd(tail);   // release
+      Serial1.print("BURST "); Serial1.print(ms); Serial1.println("ms");
+      Serial.print("BURST ");  Serial.print(ms);  Serial.println("ms");
+    }
   }
   else if (c == '<') {                  // hex to rangefinder: <aa 80 00 22 a2
     char buf[48];
