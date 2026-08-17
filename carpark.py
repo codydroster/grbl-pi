@@ -104,14 +104,14 @@ def read_current(uart, timeout=2.0):
 # for that work, or the Pi gives up while the machine is still moving - and
 # carpark's late DONE then turns up in the next command's replies. Derived from
 # carpark1.ino: LIFT_TIMEOUT_MS 7s (x2 motors), DRIVE_TIMEOUT_MS 10s,
-# DEPTH_TIMEOUT_MS 10s, SCAN_WAIT_MS 3s.
+# DEPTH_TIMEOUT_MS 15s, SCAN_WAIT_MS 3s.
 TIMEOUTS = {
     "u": 20.0, "d": 20.0,              # two lift motors at 7s each + kick/settle
     "l": 15.0,                         # driveToBin, 10s
     "g": 15.0,                         # driveToHome, 10s
     "t": 45.0,                         # driveToBin + both lifts + driveToHome
-    "r": 20.0,                         # a reading plus a possible depth move
-    "1": 15.0, "2": 15.0, "3": 15.0,   # driveToDepth, 10s
+    "r": 25.0,                         # a reading plus a possible depth move
+    "1": 20.0, "2": 20.0, "3": 20.0,   # driveToDepth, 15s
 }
 DEFAULT_TIMEOUT = 30.0
 

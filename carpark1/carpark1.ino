@@ -33,7 +33,7 @@ const int HOME_SLOW   = 200;   // home below this = close, ease off
 const int      DRIVE_SPEED     = 250;    // fast approach
 const int      CREEP_SPEED     = 110;    // lowest speed with enough torque to
                                          // actually move the car (50 stalled)
-const uint32_t BIN_OVERRUN_MS  = 400;    // keep creeping this long after the bin trigger
+const uint32_t BIN_OVERRUN_MS  = 300;    // keep creeping this long after the bin trigger
 const uint32_t DRIVE_TIMEOUT_MS = 10000; // safety: give up on a drive after this
 
 // Depth positions in a lane, as the rangefinder sees them (mm from carpark).
@@ -52,10 +52,19 @@ const int DEPTH_MM[3] = {235, 430, 630};
 const int      BARCODE_MM     = 200;     // ideal read distance
 const int      BARCODE_TOL_MM = 20;      // readable band extends this far past
                                          // BARCODE_MM and past depth 1
-const int      DEPTH_SLOW_MM = 80;       // creep once this close to target
+// MUST be wider than the distance the car covers in one measurement cycle at
+// DRIVE_SPEED, or the creep never engages: the speed is only updated once per
+// reading, so a zone narrower than one cycle gets crossed at full speed. That
+// is what 80 was - measured travel at DRIVE_SPEED is ~86mm per cycle, so the
+// car went from "still fast" to "past the target" without ever creeping.
+const int      DEPTH_SLOW_MM = 200;      // creep once this close to target
 const int      DEPTH_TOL_MM  = 10;       // within this of target = arrived
+const int      DEPTH_MAX_MISSES = 3;     // consecutive dropped reads before giving up
 const uint32_t DEPTH_SETTLE_MS = 80;     // pause after braking, before measuring
-const uint32_t DEPTH_TIMEOUT_MS = 10000; // safety: give up on a depth move
+// Budget for the whole move: the creep zone is wide (more cycles), and a miss
+// costs a full RANGE_WAIT_MS retry, so 10s was tight enough to turn a couple of
+// dropped reads into a timeout. carpark.TIMEOUTS on the Pi must stay above this.
+const uint32_t DEPTH_TIMEOUT_MS = 15000; // safety: give up on a depth move
 
 // Rangefinder: laser distance module on Serial4 (RX4 pin 16 / TX4 pin 17),
 // pointed down the lane at the car - reads how deep the car has driven in.
@@ -225,16 +234,9 @@ void runUntilSpike(char motor, char dir) {
   waitPumping(SETTLE_MS);                               // let running current settle
 
   uint32_t t0 = millis();
-  uint32_t lastReport = 0;
   while (millis() - t0 < LIFT_TIMEOUT_MS) {
     pump();
-    float mA = readCurrent();
-    if (millis() - lastReport >= 100) {      // ~10x/sec
-      lastReport = millis();
-      Serial1.print("I "); Serial1.println(mA, 1);
-      Serial.print("I ");  Serial.println(mA, 1);
-    }
-    if (mA >= CURRENT_SPIKE) break;          // stall -> done
+    if (readCurrent() >= CURRENT_SPIKE) break;   // stall -> done
   }
   sprintf(cmd, "%cS", motor);                // stop this motor
   car1cmd(cmd);
@@ -265,9 +267,23 @@ bool driveToBin() {
 // speed until within DEPTH_SLOW_MM, creep inside it, brake on arrival.
 bool driveToDepth(int targetMm, int tolMm) {
   uint32_t t0 = millis();
+  int misses = 0;
   while (millis() - t0 < DEPTH_TIMEOUT_MS) {
     int d = readDistanceMM();
-    if (d < 0) { car1cmd("AB"); car1cmd("AS"); return false; }
+    if (d < 0) {
+      // A dropped frame is not a failure - misses happen while the car is
+      // MOVING. Stop rather than roll on blind, then ask again from standstill,
+      // which is the condition the sensor reads best in. Only a run of them is
+      // a real failure. (No DONE/FAIL in this text - the Pi stops reading at
+      // the first line containing either.)
+      car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
+      if (++misses >= DEPTH_MAX_MISSES) {
+        say("no usable reading from the rangefinder");
+        return false;
+      }
+      continue;
+    }
+    misses = 0;
     Serial1.print("d "); Serial1.println(d);     // progress, echoed by the Pi
     Serial.print("d ");  Serial.println(d);
     int err = targetMm - d;                      // + = deeper, - = too deep
@@ -277,8 +293,15 @@ bool driveToDepth(int targetMm, int tolMm) {
       car1cmd("AS");
       return true;
     }
-    carSpeed(err > 0 ? 'F' : 'R',
-             abs(err) > DEPTH_SLOW_MM ? DRIVE_SPEED : CREEP_SPEED);
+    // Full speed is for going FORWARD only. Blind travel from a missed reading
+    // then goes deeper into the lane - where we are heading anyway, and the
+    // shelf bounds it. In reverse the same miss is ~300mm back toward the dock
+    // with a bin aboard, which is how the car once ran from 330mm to the dock.
+    // A reverse here is also usually an overshoot correction, i.e. a fine
+    // adjustment by definition. So reverse always creeps.
+    bool back = err < 0;
+    carSpeed(back ? 'R' : 'F',
+             (!back && abs(err) > DEPTH_SLOW_MM) ? DRIVE_SPEED : CREEP_SPEED);
   }
   car1cmd("AB"); car1cmd("AS");
   return false;

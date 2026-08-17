@@ -66,7 +66,31 @@ HELP = """commands:
   <raw gcode>   anything else is sent straight to GRBL
   c1 / c2       switch active carriage (prompt shows which)
   help          show this list
-  quit          exit"""
+  quit          exit
+
+carpark protocol letters - the single chars the shell commands above send to
+the carpark board. Type these raw in the web DevPage crane console or in the
+Teensy's USB serial monitor; the shell equivalent is in brackets.
+  f b s   drive forward / back / stop all motors        [f, r, s]
+  u d     lifts up / down                               [u, d]
+  t       retrieve: in, grab bin, lift, back out home   [ret]
+  l       locate: in, stop at the bin, no lift/return   [locate]
+  g       go home: reverse until docked                 [gohome]
+  1 2 3   drive to taught depth 1/2/3 (1 = closest)     [depth N]
+  r       drive to the barcode read distance            [readpos]
+  m       one rangefinder reading -> "DIST <mm>"        [dist]
+  Q       fresh scan, waits for it -> "BC <code|->"     [scan]
+  q       last barcode already seen -> "BC <code>"      [-]
+  h       home sensor    -> "HOME <0|1> <raw>"          [home]
+  p       bin sensor     -> "BIN <0|1> <raw>"           [bin]
+  a       align sensor   -> "ALIGN <0|1> <raw>"         [align]
+  c       lift current   -> "I <mA>"                    [cur]
+  >...    forward the rest of the line to the car board [car <cmd>]
+  <...    hex bytes straight to the rangefinder         [laser <hex>]
+
+WATCH OUT: 'r' means two different things. In the shell r = reverse; the
+carpark letter r = drive to read position. The shell's reverse sends 'b'.
+Sequences (t l g 1 2 3 r) stream progress lines and end in DONE or FAIL."""
 
 
 def clear_path(carriages, active, our_ref, target_ref):
