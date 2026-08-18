@@ -48,8 +48,9 @@ HELP = """commands:
   slots         print barcode->slot assignments and the next free slot
   depth N       drive the car to taught depth N (1=closest, 2, 3=deepest).
                 Never scans - use 'read' for that
-  read          drive to depth 1 AND scan the carried bin's label, arming the
-                scanner on the way in. What store/get use to identify a bin
+  read          drive in at full speed and scan the carried bin's label, the
+                scanner triggering in motion. What store/get use to identify a
+                bin. Does not position precisely - it is not a depth move
   place         creep in until the carried bin meets whatever is already in the
                 lane, and stop there - for dropping at an unknown depth
   dist          car depth in the lane (mm) from carpark's rangefinder
@@ -85,7 +86,7 @@ Teensy's USB serial monitor; the shell equivalent is in brackets.
   l       locate: in, stop at the bin, no lift/return   [locate]
   g       go home: reverse until docked                 [gohome]
   1 2 3   drive to taught depth 1/2/3 (never scans)     [depth N]
-  R       depth 1 AND read the label -> "BC <code|->"   [read]
+  R       drive in fast + read the label -> "BC <code>"  [read]
   P       creep in until the carried bin is stopped     [place]
   m       one rangefinder reading -> "DIST <mm>"        [dist]
   Q       fresh scan, waits for it -> "BC <code|->"     [scan]
