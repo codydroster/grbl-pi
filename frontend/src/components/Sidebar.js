@@ -411,21 +411,23 @@ const Sidebar = forwardRef(function Sidebar(
       <div key={cat}>
         <div style={{
           ...S.catRow,
-          ...(topLevel ? { paddingLeft: 10 } : {}),   // nothing above it to indent under
+          // No icon of its own, so pad to where the parent labels start (their
+          // 10px padding plus a ~20px chevron) and it reads as their peer.
+          ...(topLevel ? { paddingLeft: 30 } : {}),
           ...(isSelected && !isExpanded ? S.catRowActive : {}),
         }}>
-          {/* Pinned top-level row reads as a section, not a folder inside one:
-              a chevron like the parent rows rather than a folder icon, and the
-              label in the display face, all caps, to match them. */}
-          <button style={S.catFolderBtn} onClick={() => toggleCategory(cat)}>
-            <Icon
-              path={topLevel
-                ? (isExpanded ? mdiChevronDown : mdiChevronRight)
-                : (isExpanded ? mdiFolderOpen : mdiFolder)}
-              size={topLevel ? 0.65 : 0.75}
-              color={isSelected ? 'var(--accent)' : 'var(--text-faint)'}
-            />
-          </button>
+          {/* The pinned row is a plain destination - no icon and nothing to
+              expand. Its bins have no subcategories to drill into, so a tree
+              control there only offered a list of the same thing twice. */}
+          {!topLevel && (
+            <button style={S.catFolderBtn} onClick={() => toggleCategory(cat)}>
+              <Icon
+                path={isExpanded ? mdiFolderOpen : mdiFolder}
+                size={0.75}
+                color={isSelected ? 'var(--accent)' : 'var(--text-faint)'}
+              />
+            </button>
+          )}
           <button
             style={{
               ...S.catLabel(isSelected && !isExpanded),
@@ -446,23 +448,10 @@ const Sidebar = forwardRef(function Sidebar(
           </button>
         </div>
 
-        {isExpanded && binsMap[cat] && (
+        {!topLevel && isExpanded && binsMap[cat] && (
           <div style={S.subcatSection}>
             {binsMap[cat].length === 0 && <div style={S.emptyMsg}>No bins</div>}
-            {/* No subcategory layer in the unfiled bucket - it holds bins that
-                have no home yet, so nesting them under a subcategory called
-                "Uncategorized" inside a category called "uncategorized" was
-                a level of tree that said nothing. List the bins straight. */}
-            {topLevel && binsMap[cat].map(bin => (
-              <div
-                key={bin.barcode}
-                style={S.binItem}
-                onClick={() => { setSelectedSubcategory(null); onSelect(cat); }}
-              >
-                {bin.name}
-              </div>
-            ))}
-            {!topLevel && [...new Set(binsMap[cat].map(bin => bin.subcategory || 'Uncategorized'))].map(subcat => {
+            {[...new Set(binsMap[cat].map(bin => bin.subcategory || 'Uncategorized'))].map(subcat => {
               const isSubSelected = selectedSubcategory?.cat === cat && selectedSubcategory?.subcat === subcat;
               const isSubExpanded = expandedSubcats[cat]?.has(subcat);
               return (
