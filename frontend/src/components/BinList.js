@@ -243,12 +243,117 @@ export default function BinList({ category, allCategories, categoryList, parentN
     ? target === UNCATEGORIZED           // adding: depends on where it is going
     : category === UNCATEGORIZED;        // editing: depends on where it already is
   const flat = category === UNCATEGORIZED;
+  // In a parent group the bins come from several categories at once, so they
+  // are split by category first and each gets its own heading.
+  const byCategory = parentName
+    ? bins.reduce((acc, b) => {
+        const c = b._category || UNCATEGORIZED;
+        (acc[c] = acc[c] || []).push(b);
+        return acc;
+      }, {})
+    : null;
   const grouped = flat
     ? (bins.length ? { all: bins } : {})
     : groupBins(bins);
   const visibleGroups = (!flat && selectedSubcategory)
     ? (grouped[selectedSubcategory] ? { [selectedSubcategory]: grouped[selectedSubcategory] } : {})
     : grouped;
+
+  // One subcategory section per group: heading, then the bin cards. Pulled
+  // out because a parent group renders it once per category.
+  const renderGroups = (groups) => (
+    <>
+        {Object.entries(groups).map(([subcat, list]) => (
+          <div key={subcat} style={{ marginBottom: 28 }}>
+            {!flat && <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '2px',
+              color: 'var(--text-dim)',
+              marginBottom: 10,
+              paddingBottom: 5,
+              borderBottom: '1px solid var(--line)',
+            }}>
+              <span style={{ width: 10, height: 10, background: 'var(--accent)', flexShrink: 0 }} />
+              {subcat}
+              <span style={{ marginLeft: 'auto', color: 'var(--text-faint)', letterSpacing: '1px' }}>{list.length.toString().padStart(2, '0')}</span>
+            </div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {list.map((bin) => (
+                <div
+                  key={bin.barcode}
+                  className={requested.has(bin.barcode) ? 'bin-requested' : getBinAnimationClass(bin)}
+                  onClick={() => handleBinClick(bin.barcode)}
+                  style={{
+                    width: 152,
+                    padding: '10px 12px 9px',
+                    borderRadius: 8,
+                    backgroundColor: 'var(--raised)',
+                    border: requested.has(bin.barcode)
+                      ? '1px dashed var(--accent)'
+                      : `1px solid ${getBinBorderColor(bin)}`,
+                    borderTop: requested.has(bin.barcode)
+                      ? '3px dashed var(--accent)'
+                      : `3px solid ${getBinBorderColor(bin)}`,
+                    fontSize: 12,
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+                    position: 'relative',
+                    userSelect: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ position: 'absolute', top: 5, right: 4, display: 'flex' }}>
+                    <button
+                      onClick={e => { e.stopPropagation(); handleEditBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--text-faint)' }}
+                      title="Edit"
+                    >
+                      <Icon path={mdiPencilOutline} size={0.6} />
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); handleDeleteBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--red)' }}
+                      title="Delete"
+                    >
+                      <Icon path={mdiTrashCanOutline} size={0.6} />
+                    </button>
+                  </div>
+
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3, paddingRight: 36, color: 'var(--text)' }}>
+                    {bin.name}
+                  </div>
+                  <div style={{ color: 'var(--text-faint)', fontSize: 10, marginBottom: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.5px' }}>
+                    {bin.barcode}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {requested.has(bin.barcode) ? (
+                      <>
+                        <span className="led led-accent" />
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: 'var(--accent)' }}>
+                          REQUESTED…
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`led ${getBinStatus(bin).led}`} />
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: getBinStatus(bin).color }}>
+                          {getBinStatus(bin).label}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+    </>
+  );
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', backgroundColor: 'var(--bg)' }}>
@@ -336,115 +441,27 @@ export default function BinList({ category, allCategories, categoryList, parentN
         )}
 
         <div>
-          {Object.entries(visibleGroups).map(([subcat, list]) => (
-            <div key={subcat} style={{ marginBottom: 28 }}>
-              {!flat && <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                fontFamily: 'var(--font-mono)',
-                fontSize: 11,
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                letterSpacing: '2px',
-                color: 'var(--text-dim)',
-                marginBottom: 10,
-                paddingBottom: 5,
-                borderBottom: '1px solid var(--line)',
-              }}>
-                <span style={{ width: 10, height: 10, background: 'var(--accent)', flexShrink: 0 }} />
-                {subcat}
-                <span style={{ marginLeft: 'auto', color: 'var(--text-faint)', letterSpacing: '1px' }}>{list.length.toString().padStart(2, '0')}</span>
-              </div>}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {list.map((bin) => (
-                  <div
-                    key={bin.barcode}
-                    className={requested.has(bin.barcode) ? 'bin-requested' : getBinAnimationClass(bin)}
-                    onClick={() => handleBinClick(bin.barcode)}
-                    style={{
-                      width: 152,
-                      padding: '10px 12px 9px',
-                      borderRadius: 8,
-                      backgroundColor: 'var(--raised)',
-                      border: requested.has(bin.barcode)
-                        ? '1px dashed var(--accent)'
-                        : `1px solid ${getBinBorderColor(bin)}`,
-                      borderTop: requested.has(bin.barcode)
-                        ? '3px dashed var(--accent)'
-                        : `3px solid ${getBinBorderColor(bin)}`,
-                      fontSize: 12,
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
-                      position: 'relative',
-                      userSelect: 'none',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <div style={{ position: 'absolute', top: 5, right: 4, display: 'flex' }}>
-                      <button
-                        onClick={e => { e.stopPropagation(); handleEditBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--text-faint)' }}
-                        title="Edit"
-                      >
-                        <Icon path={mdiPencilOutline} size={0.6} />
-                      </button>
-                      <button
-                        onClick={e => { e.stopPropagation(); handleDeleteBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--red)' }}
-                        title="Delete"
-                      >
-                        <Icon path={mdiTrashCanOutline} size={0.6} />
-                      </button>
-                    </div>
-
-                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3, paddingRight: 36, color: 'var(--text)' }}>
-                      {bin.name}
-                    </div>
-                    <div style={{ color: 'var(--text-faint)', fontSize: 10, marginBottom: bin._category ? 4 : 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.5px' }}>
-                      {bin.barcode}
-                    </div>
-                    {bin._category && (
-                      <div style={{
-                        display: 'inline-block',
-                        marginBottom: 8,
-                        padding: '1px 6px',
-                        borderRadius: 4,
-                        border: '1px solid var(--line)',
-                        color: 'var(--text-dim)',
-                        fontSize: 9,
-                        fontFamily: 'var(--font-mono)',
-                        letterSpacing: '0.5px',
-                        textTransform: 'uppercase',
-                        maxWidth: '100%',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {bin._category}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {requested.has(bin.barcode) ? (
-                        <>
-                          <span className="led led-accent" />
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: 'var(--accent)' }}>
-                            REQUESTED…
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <span className={`led ${getBinStatus(bin).led}`} />
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: getBinStatus(bin).color }}>
-                            {getBinStatus(bin).label}
-                          </span>
-                        </>
-                      )}
-                    </div>
+          {byCategory
+            ? Object.entries(byCategory).map(([cat, catBins]) => (
+                <div key={cat} style={{ marginBottom: 8 }}>
+                  {/* One bold heading per folder, matching the single-category
+                      header - a parent group merges several categories, so
+                      without this there is nothing saying where a bin lives. */}
+                  <div style={{
+                    fontFamily: 'var(--font-display)',
+                    fontWeight: 700,
+                    fontSize: 18,
+                    letterSpacing: '1.5px',
+                    textTransform: 'uppercase',
+                    color: 'var(--text)',
+                    marginBottom: 14,
+                  }}>
+                    {cat}
                   </div>
-                ))}
-              </div>
-            </div>
-          ))}
+                  {renderGroups(groupBins(catBins))}
+                </div>
+              ))
+            : renderGroups(visibleGroups)}
         </div>
       </div>
     </div>
