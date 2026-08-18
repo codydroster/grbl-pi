@@ -164,11 +164,9 @@ bool binSeen = false;     // that value is below BIN_LEVEL
 // waits on it - a received barcode is the real success signal.
 const uint32_t SCAN_BAUD    = 115200;
 const uint32_t SCAN_WAIT_MS = 3000;   // how long a triggered scan may hunt
-// Trigger the scanner DURING a depth-1 move, as soon as the bin is this close,
-// so decoding overlaps the creep instead of starting after it. The scanner
-// reads from ~25-400mm, so it can see the label well before the car arrives.
-const int      SCAN_ARM_MM  = 250;
-uint32_t scanArmedAt = 0;             // millis when armed mid-move, 0 = not armed
+// The scanner is triggered at the start of the run home ('R') and the carried
+// bin sweeps past it en route, so there is no distance threshold to arm at.
+uint32_t scanArmedAt = 0;             // millis when the scan was triggered
 bool scanAck = false;                 // set by pump() if the scanner ever ACKs
 char lastBarcode[32] = "";
 
@@ -375,57 +373,6 @@ bool driveUntilBlocked() {
   return false;
 }
 
-// Drive in to the scanner at full speed, triggering it as soon as the carried
-// bin is close enough to read. NO creep and NO tolerance, deliberately: the car
-// goes home straight after this, so where it ends up does not matter - only
-// that the label spent time inside the scanner's window while it was hunting.
-// Costs nothing to be imprecise here, and saves the whole two-phase approach.
-// It stops on the first reading at or past depth 1, so it can overrun by up to
-// one reading's travel (~100mm at DRIVE_SPEED). That lands between depth slots,
-// which is empty space - but it IS the reason this is not used to place a bin.
-bool driveToScan() {
-  uint32_t t0 = millis();
-  int misses = 0;
-  scanArmedAt = 0;
-  while (millis() - t0 < DEPTH_TIMEOUT_MS) {
-    int d = readDistanceMM();                    // car keeps rolling through this
-    if (d < 0) {
-      if (++misses >= DEPTH_MAX_MISSES) {
-        car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
-        say("no usable reading from the rangefinder");
-        return false;
-      }
-      continue;
-    }
-    misses = 0;
-    Serial1.print("d "); Serial1.println(d);
-    Serial.print("d ");  Serial.println(d);
-
-    // Close enough to be read: start the scanner decoding now, in motion.
-    if (!scanArmedAt && d < SCAN_ARM_MM) {
-      lastBarcode[0] = 0;
-      scannerCmd("SCAN");
-      scanArmedAt = millis();
-    }
-    if (d >= DEPTH_MM[0]) {                      // at or past the read position
-      car1cmd("AB"); waitPumping(DEPTH_SETTLE_MS); car1cmd("AS");
-      // Started out already past the trigger point, so the test above never
-      // fired. Scan from here anyway - the scanner reads out to ~400mm, and
-      // coming back for it would be a move purely to satisfy a threshold.
-      if (!scanArmedAt) {
-        lastBarcode[0] = 0;
-        scannerCmd("SCAN");
-        scanArmedAt = millis();
-      }
-      return true;
-    }
-    carSpeed('F', DRIVE_SPEED);                  // keep rolling - no creep
-  }
-  car1cmd("AB"); car1cmd("AS");
-  say("timed out driving to the scanner");
-  return false;
-}
-
 // Drive the car to a measured depth in the lane. ONE timed burst at DRIVE_SPEED
 // covers the bulk of the distance, aiming at the near edge of the creep zone,
 // then the car creeps at DEPTH_CREEP_SPEED with the rangefinder closing the
@@ -561,10 +508,9 @@ void locateBin() {
 //   h/p/a/c  report home sensor / bin sensor / alignment sensor / current
 //   1/2/3  drive the car to that taught depth in the lane (1 = closest).
 //          Never scans - a depth-1 move is often just shelving a bin there.
-//   R      drive in at full speed to the scanner and read the carried bin's
-//          label, triggering the scanner in motion once the bin is within
-//          SCAN_ARM_MM -> "BC <code|->" then READ DONE/FAIL. Does NOT position
-//          precisely - never use it to place a bin.
+//   R      go home while reading the carried bin's label - the bin passes the
+//          scanner on the way, so this costs nothing over a plain 'g'.
+//          -> "BC <code|->" then READ DONE/FAIL. Replaces g in a sequence.
 //   P      place: creep in until the carried bin meets whatever is already in
 //          the lane (or the back of it) and stop there, for an unknown depth
 //   m      one rangefinder reading -> "DIST <mm>" (-1 = no reading)
@@ -668,18 +614,20 @@ void handleCommand(Stream &port) {
   } else if (c == 'P') {                // place: creep in until the bin is stopped
     say("PLACE START");
     say(driveUntilBlocked() ? "PLACE DONE" : "PLACE FAIL");
-  } else if (c == 'R') {                // depth 1 AND read the carried label
+  } else if (c == 'R') {                // go home, reading the label en route
     say("READ START");
-    // Full speed the whole way, scanner triggered in motion at SCAN_ARM_MM.
-    // No creep, no tolerance - the car goes home right after, so the only thing
-    // that matters is that the label passed the scanner while it was hunting.
-    bool ok = driveToScan();
-    if (scanArmedAt) {
-      // Let the scan run out the rest of ITS window, not a fresh one - most of
-      // it has already elapsed during the move, which is the whole point.
-      while (millis() - scanArmedAt < SCAN_WAIT_MS && !lastBarcode[0]) pump();
-      scannerCmd("SLEEP");
-    }
+    // NO MOVE OF ITS OWN. The car has to return home anyway, and the bin it is
+    // carrying sweeps straight past the fixed scanner on the way - so the scan
+    // is free. Trigger before setting off and the code is usually decoded
+    // before the car is even docked; the wait below then falls straight
+    // through. Nothing stops, and the separate gohome step disappears.
+    lastBarcode[0] = 0;
+    scannerCmd("SCAN");
+    scanArmedAt = millis();
+    bool ok = driveToHome();
+    // Anything left of the scan window, in case the run home was very short.
+    while (millis() - scanArmedAt < SCAN_WAIT_MS && !lastBarcode[0]) pump();
+    scannerCmd("SLEEP");
     // Before the terminal line: the Pi stops reading at the first DONE/FAIL.
     Serial1.print("BC "); Serial1.println(lastBarcode[0] ? lastBarcode : "-");
     Serial.print("BC ");  Serial.println(lastBarcode[0] ? lastBarcode : "-");

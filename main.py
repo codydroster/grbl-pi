@@ -48,9 +48,9 @@ HELP = """commands:
   slots         print barcode->slot assignments and the next free slot
   depth N       drive the car to taught depth N (1=closest, 2, 3=deepest).
                 Never scans - use 'read' for that
-  read          drive in at full speed and scan the carried bin's label, the
-                scanner triggering in motion. What store/get use to identify a
-                bin. Does not position precisely - it is not a depth move
+  read          send the car home AND scan the label on the way - the bin
+                passes the scanner anyway, so the scan is free. Replaces
+                gohome in the store/get sequences; no extra move at all
   place         creep in until the carried bin meets whatever is already in the
                 lane, and stop there - for dropping at an unknown depth
   dist          car depth in the lane (mm) from carpark's rangefinder
@@ -86,7 +86,7 @@ Teensy's USB serial monitor; the shell equivalent is in brackets.
   l       locate: in, stop at the bin, no lift/return   [locate]
   g       go home: reverse until docked                 [gohome]
   1 2 3   drive to taught depth 1/2/3 (never scans)     [depth N]
-  R       drive in fast + read the label -> "BC <code>"  [read]
+  R       go home AND read the label -> "BC <code|->"    [read]
   P       creep in until the carried bin is stopped     [place]
   m       one rangefinder reading -> "DIST <mm>"        [dist]
   Q       fresh scan, waits for it -> "BC <code|->"     [scan]
@@ -204,7 +204,7 @@ def store_bin(carriages, active, say, target=None):
     if not seq("u"):
         return False
 
-    say("presenting to scanner")     # 'R' = depth 1 AND scan on the way in
+    say("car home, reading the label on the way")   # 'R' = 'g' plus the scan
     if not seq("R"):
         return False
     code = carpark.read_barcode(uart, fresh=False)
@@ -212,10 +212,6 @@ def store_bin(carriages, active, say, target=None):
         say("no barcode read - stopping with the bin still on the car")
         return False
     say("barcode %s" % code)
-
-    say("car home")
-    if not seq("g"):
-        return False
 
     key = target or slots.next_free(rack_lanes())
     if key is None:
@@ -313,16 +309,14 @@ def retrieve_bin(carriages, active, say, barcode):
         say("lift up")
         if not seq("u"):
             return False
-        say("reading label")             # 'R' = depth 1 AND scan; bin is
-        if not seq("R"):                 # aboard, so distance works again
+        say("car home, reading the label on the way")   # 'R' = 'g' + scan
+        if not seq("R"):
             return False
         got = carpark.read_barcode(uart, fresh=False)
         if got is None:
             say("could not read the label - stopping with the bin on the car")
             return False
         say("picked up %s" % got)
-        if not seq("g"):
-            return False
 
         got_key = slots.find(got)
         if got == barcode:

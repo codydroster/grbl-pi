@@ -85,9 +85,9 @@ def read_barcode(uart, timeout=8.0, fresh=True):
     """Barcode from the scanner; None = nothing seen.
 
     fresh=True ('Q') triggers a new scan and waits SCAN_WAIT_MS for it.
-    fresh=False ('q') just reports what carpark already has - which is what a
-    depth-1 move leaves behind, since that arms the scanner on the way in and
-    waits out its window before finishing. No second scan needed.
+    fresh=False ('q') just reports what carpark already has - which is what 'R'
+    leaves behind, since that triggers the scanner as the car sets off home and
+    the bin is read en route. No second scan needed.
     """
     uart.reset_input_buffer()
     uart.write(b"Q" if fresh else b"q")
@@ -134,7 +134,7 @@ TIMEOUTS = {
     "g": 15.0,                         # driveToHome, 10s
     "t": 45.0,                         # driveToBin + both lifts + driveToHome
     "1": 20.0, "2": 20.0, "3": 20.0,   # driveToDepth, 15s
-    "R": 25.0,                         # depth 1 (15s) + the rest of a 3s scan
+    "R": 25.0,                         # driveToHome (10s) + the rest of a 3s scan
     "P": 45.0,                         # creeps the whole lane feeling for the
                                        # drop point, firmware allows 40s
 }
