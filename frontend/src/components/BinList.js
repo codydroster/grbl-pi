@@ -8,11 +8,19 @@ import {
 import Modal from './Modal';
 import { BASE_URL, WS_URL } from '../config';
 
+// Every bin wears its status. In stock used to fall through to a plain grey
+// border, which meant the most common card carried no colour at all and the
+// grid read as a wall of white against a grey page.
 function getBinBorderColor(bin) {
-  if (bin.status === 'out') return 'var(--red)';
-  if (bin.status === 'out-pending') return 'var(--red)';
-  if (bin.status === 'in-pending') return 'var(--green)';
-  return 'var(--line)';
+  if (bin.status === 'out' || bin.status === 'out-pending') return 'var(--red)';
+  return 'var(--green)';
+}
+
+// Faint wash of the same colour across the card face, so status is legible
+// from across the room rather than only at the border.
+function getBinTint(bin) {
+  if (bin.status === 'out' || bin.status === 'out-pending') return 'var(--red-soft)';
+  return 'var(--green-soft)';
 }
 
 function getBinStatus(bin) {
@@ -303,7 +311,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
                     width: 152,
                     padding: '10px 12px 9px',
                     borderRadius: 8,
-                    backgroundColor: 'var(--raised)',
+                    backgroundColor: getBinTint(bin),
                     border: requested.has(bin.barcode)
                       ? '1px dashed var(--accent)'
                       : `1px solid ${getBinBorderColor(bin)}`,

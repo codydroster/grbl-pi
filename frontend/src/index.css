@@ -13,11 +13,14 @@
   --text-faint:#86847f;   /* barcodes etc - darker than the old blue-grey, which was under 2.5:1 */
   --accent:     #4f5157;   /* graphite - selection, primary buttons */
   --accent-dim: #34363b;
-  /* Muted enough to sit in a quiet palette, still far enough apart to read
-     at a glance on the status LEDs, which is the one thing colour is for. */
-  --green:     #4a7a52;   /* in stock */
-  --green-dim: #3a6141;
-  --red:       #a85a4e;   /* out / error */
+  /* Status is the ONE thing colour is for here, so it is the one thing allowed
+     to be loud. The chrome is grey precisely so these carry against it - a
+     muted version just made the bins disappear into the panel. The -soft pair
+     tints the card face; both stay light enough for --text to sit on them. */
+  --green:      #1f9d55;   /* in stock */
+  --green-soft: #e9f6ee;
+  --red:        #d6453f;   /* out / error */
+  --red-soft:   #fdeceb;
   --font-display: 'Saira Condensed', 'Arial Narrow', sans-serif;
   --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
   --font-body: 'IBM Plex Sans', Arial, sans-serif;

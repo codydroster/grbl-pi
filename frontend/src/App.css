@@ -17,18 +17,6 @@
   position: relative;
 }
 
-/* Simple dashed divider under the header */
-.app-topbar::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -3px;
-  height: 0;
-  border-top: 2px dashed var(--text);
-  pointer-events: none;
-}
-
 .app-topbar h1 {
   margin: 0;
   font-family: var(--font-display);
