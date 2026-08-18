@@ -74,6 +74,7 @@ const inputStyle = {
 
 export default function BinList({ category, allCategories, categoryList, parentName, selectedSubcategory, onBinsChanged }) {
   const [bins, setBins] = useState([]);
+  const [query, setQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editIndex, setEditIndex] = useState(null);
   // Which category a NEW bin is filed under. Separate from `category` (what is
@@ -260,19 +261,31 @@ export default function BinList({ category, allCategories, categoryList, parentN
   const hideSubcat = editIndex === null
     ? target === UNCATEGORIZED           // adding: depends on where it is going
     : category === UNCATEGORIZED;        // editing: depends on where it already is
+  // Search filters the bins BEFORE anything is grouped, so a subcategory or a
+  // category with no matches produces no heading at all rather than an empty
+  // one. It searches whatever the current view holds - a category, a
+  // subcategory, a parent group, or all bins - rather than jumping scope.
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? bins.filter(b =>
+        (b.name || '').toLowerCase().includes(q) ||
+        (b.barcode || '').toLowerCase().includes(q) ||
+        (b.subcategory || '').toLowerCase().includes(q))
+    : bins;
+
   const flat = category === UNCATEGORIZED;
   // In a parent group the bins come from several categories at once, so they
   // are split by category first and each gets its own heading.
   const byCategory = parentName
-    ? bins.reduce((acc, b) => {
+    ? shown.reduce((acc, b) => {
         const c = b._category || UNCATEGORIZED;
         (acc[c] = acc[c] || []).push(b);
         return acc;
       }, {})
     : null;
   const grouped = flat
-    ? (bins.length ? { all: bins } : {})
-    : groupBins(bins);
+    ? (shown.length ? { all: shown } : {})
+    : groupBins(shown);
   const visibleGroups = (!flat && selectedSubcategory)
     ? (grouped[selectedSubcategory] ? { [selectedSubcategory]: grouped[selectedSubcategory] } : {})
     : grouped;
@@ -395,6 +408,25 @@ export default function BinList({ category, allCategories, categoryList, parentN
           {parentName ? parentName : category ? category : 'Select a category'}
           {selectedSubcategory && <span style={{ color: 'var(--text-faint)', fontWeight: 600 }}> / {selectedSubcategory}</span>}
         </span>
+        <input
+          placeholder="Search bins"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => e.key === 'Escape' && setQuery('')}
+          style={{
+            flex: 1,
+            maxWidth: 260,
+            marginLeft: 'auto',
+            marginRight: 12,
+            padding: '5px 9px',
+            border: '1px solid var(--line)',
+            borderRadius: 6,
+            background: 'var(--raised)',
+            color: 'var(--text)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12,
+          }}
+        />
         {/* Always available - a bin can be filed from anywhere, including a
           parent group or a fresh install with nothing selected. */}
         <button
@@ -459,6 +491,16 @@ export default function BinList({ category, allCategories, categoryList, parentN
         )}
 
         <div>
+          {q && shown.length === 0 && (
+            <div style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+              color: 'var(--text-faint)',
+              padding: '8px 2px',
+            }}>
+              No bins match "{query.trim()}"
+            </div>
+          )}
           {byCategory
             ? Object.entries(byCategory).map(([cat, catBins]) => (
                 <div key={cat} style={{ marginBottom: 8 }}>
