@@ -370,10 +370,14 @@ def retrieve_bin(carriages, active, say, barcode):
     return False
 
 
-def dispatch(carriages, active, line, say=print):
+def dispatch(carriages, active, line, say=print, on_status=None):
     # Run one debug command against the active carriage; returns the (possibly
     # switched) active carriage. say() gets every output line - the shell prints,
     # the web /debug page broadcasts. One implementation for both.
+    # on_status is the same idea for bin status changes: the terminal has nobody
+    # to tell, the web page has open browsers. Without it a store run from the
+    # Debug page wrote the new status to disk and left every browser showing the
+    # old one until someone reloaded.
     c = carriages[active]
     cnc, uart, sensor = c["cnc"], c["uart"], c["sensor"]
     off = positions.load_offsets().get(str(active), [0, 0])
@@ -447,7 +451,7 @@ def dispatch(carriages, active, line, say=print):
         elif cmd == "store":      # full put-away of the bin at staging
             target = (slots.key(int(parts[1]), int(parts[2]), int(parts[3]))
                       if len(parts) == 4 else None)
-            store_bin(carriages, active, say, target)
+            store_bin(carriages, active, say, target, on_status=on_status)
         elif cmd == "get":        # fetch a stored bin by barcode
             retrieve_bin(carriages, active, say, parts[1])
         elif cmd == "slots":

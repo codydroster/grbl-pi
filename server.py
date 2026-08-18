@@ -219,8 +219,11 @@ async def do_debug(app, command):
         say("machine busy")
         return
     async with app["lock"]:
+        # Pass the broadcast hook: a 'store' typed here changes a bin's status,
+        # and every open page needs to hear about it, not just the disk.
         app["debug_active"] = await asyncio.get_event_loop().run_in_executor(
-            None, main.dispatch, app["carriages"], n, command, say)
+            None, main.dispatch, app["carriages"], n, command, say,
+            lambda code, status: emit({"barcode": code, "status": status}))
 
 
 async def do_console(app, topic, command):
