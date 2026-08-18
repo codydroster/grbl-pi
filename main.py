@@ -175,18 +175,31 @@ def rack_lanes():
     return sorted(keys, key=row_then_col)
 
 
-def store_bin(carriages, active, say, target=None):
+def store_bin(carriages, active, say, target=None, on_status=None):
     """Take the bin waiting at the staging position and put it away.
 
     This is the one sequence that spans both axes - the carriage moves are the
     Pi's (GRBL), everything the car does is carpark's - so the interleaving has
     to live here. Each step is checked; a failure stops with the bin wherever it
     is rather than blindly carrying on.
+
+    STATUS FOLLOWS THE SCANNER, NOTHING ELSE. A bin only becomes in-pending once
+    its own label has been read off the forks, and only becomes in once it is
+    actually shelved. Nothing upstream may set either optimistically: the UI
+    cannot know which bin is really sitting at staging, and marking the tapped
+    card meant storing bin B while bin A's card claimed to be in stock.
+    on_status is for broadcasting the change; the file is written here either
+    way, so a store from the shell records it too.
     """
     uart = carriages[active]["uart"]
 
     def seq(ch):                         # per-command timeout, see carpark.TIMEOUTS
         return carpark.run_sequence(uart, ch, report=lambda l: say("  " + l))
+
+    def status(code, value):
+        inventory.set_status(code, value)
+        if on_status:
+            on_status(code, value)
 
     say("carriage -> staging %d,%d" % STAGING)
     if not goto_slot(carriages, active, *STAGING):
@@ -212,33 +225,38 @@ def store_bin(carriages, active, say, target=None):
         say("no barcode read - stopping with the bin still on the car")
         return False
     say("barcode %s" % code)
+    inventory.ensure(code)               # a record to hang the status on
+    status(code, "in-pending")           # now, and only now, is the bin known
 
     key = target or slots.next_free(rack_lanes())
     if key is None:
         say("rack is full - bin is on the car at staging")
+        status(code, "out")
         return False
     col, row, depth = (int(v) for v in key.split(","))
 
     say("carriage -> %d,%d depth %d" % (col, row, depth))
     if not goto_slot(carriages, active, col, row):
         say("cannot reach %d,%d" % (col, row))
+        status(code, "out")
         return False
     say("driving to depth %d" % depth)
     if not seq(str(depth)):
+        status(code, "out")
         return False
     say("lift down")
     if not seq("d"):
+        status(code, "out")
         return False
     say("car home")
     if not seq("g"):
+        status(code, "out")
         return False
 
     store = slots.load()                 # only recorded once the bin is placed
     store[key] = code
     slots.save(store)
-    added = inventory.ensure(code)       # so a never-seen bin shows in the UI
-    if added:
-        say("new bin - added %s to the %s category" % (code, added))
+    status(code, "in")                   # shelved, and only now in stock
     say("stored %s at %s" % (code, key))
     return True
 

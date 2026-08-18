@@ -22,6 +22,24 @@ def find(barcode):
     return None
 
 
+def set_status(barcode, status):
+    """Record a status against whichever category file holds this bin.
+
+    Returns True if a record was found. Status belongs to the barcode the
+    scanner actually read, never to whichever card someone happened to tap.
+    """
+    for f in sorted(BINS_DIR.glob("*.json")):
+        bins = _read(f)
+        hit = [b for b in bins if b.get("barcode") == barcode]
+        if not hit:
+            continue
+        for b in hit:
+            b["status"] = status
+        f.write_text(json.dumps(bins, indent=2))
+        return True
+    return False
+
+
 def ensure(barcode):
     """Give a scanned barcode a bin record if it does not already have one.
 

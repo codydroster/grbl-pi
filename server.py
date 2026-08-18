@@ -114,7 +114,12 @@ def retrieve_blocking(app, emit, n, barcode):
 
 
 def store_blocking(app, emit, n):
-    return main.store_bin(app["carriages"], n, lambda l: crane_log(emit, l))
+    # on_status only BROADCASTS. store_bin writes the record itself, keyed on
+    # the barcode the scanner actually read, so a store from the shell persists
+    # the same way and the two cannot disagree.
+    return main.store_bin(app["carriages"], n, lambda l: crane_log(emit, l),
+                          on_status=lambda code, status: emit({"barcode": code,
+                                                               "status": status}))
 
 
 async def do_retrieve(app, barcode):
@@ -137,8 +142,9 @@ async def do_retrieve(app, barcode):
 
 
 async def do_store(app, barcode):
-    # the bin waiting at staging gets put away; its label is read on the way, so
-    # the barcode the card sent is only used to report back on the right card
+    # `barcode` is which card was tapped. It is deliberately NOT used to decide
+    # anything: the bin actually sitting at staging is whatever it is, and only
+    # the scanner can say. Kept in the signature because the page sends it.
     emit = make_emit(app)
     n = pick_carriage(app)
     if n is None:
@@ -148,10 +154,13 @@ async def do_store(app, barcode):
         crane_log(emit, "machine busy - store ignored")
         return
     async with app["lock"]:
-        update_status(app, emit, barcode, "in-pending")
-        ok = await asyncio.get_event_loop().run_in_executor(
+        # NO OPTIMISTIC STATUS HERE. The page cannot know which bin is actually
+        # sitting at staging - only the scanner does. Marking the tapped card
+        # in-pending meant storing bin B while bin A claimed to be in stock.
+        # store_bin sets it against the code it reads and broadcasts through
+        # on_status, so the card that updates is the bin that moved.
+        await asyncio.get_event_loop().run_in_executor(
             None, store_blocking, app, emit, n)
-        update_status(app, emit, barcode, "in" if ok else "out")
 
 
 def cnc_blocking(app, n, command):
