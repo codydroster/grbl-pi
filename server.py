@@ -16,6 +16,7 @@ from aiohttp import web, WSMsgType
 
 import carpark
 import grbl
+import inventory
 import main
 import positions
 import slots
@@ -356,10 +357,27 @@ async def delete_category(request):
         return bad("Category not found", 404)
     bins = read_json(f, [])
     if bins and request.query.get("force") != "1":
-        # deleting the file would drop every bin record in it, so make the
-        # caller say so explicitly rather than losing them to a stray click
+        # Not an error, just worth confirming: the bins are about to move house.
+        # The caller says force=1 once it has told the user where they go.
         return web.json_response(
             {"error": "Category is not empty", "bins": len(bins)}, status=409)
+    if bins:
+        # The records outlive the category. A bin still physically exists (and
+        # may still be shelved, tracked in slots.json) after someone tidies up
+        # the folder it was filed under, so it lands in the unfiled bucket
+        # rather than being dropped - same place inventory.ensure() puts a bin
+        # nobody has categorised yet.
+        if name == inventory.UNCATEGORIZED:
+            return bad("The unfiled bucket holds bins with nowhere else to go - "
+                       "it cannot be deleted while it still has any", 409)
+        dest = BINS_DIR / (inventory.UNCATEGORIZED + ".json")
+        keep = read_json(dest, [])
+        known = {b.get("barcode") for b in keep}
+        for b in bins:
+            if b.get("barcode") in known:
+                continue                     # already filed there; do not double up
+            keep.append({**b, "subcategory": ""})   # that bucket has no subcategories
+        write_json(dest, keep)
     f.unlink()
     parents = read_json(PARENTS_FILE, {})
     if parents.pop(name, None) is not None:

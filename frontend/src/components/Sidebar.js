@@ -309,14 +309,16 @@ const Sidebar = forwardRef(function Sidebar(
       window.alert(`"${UNCATEGORIZED}" is where unfiled bins land - it cannot be deleted.`);
       return;
     }
-    // ask once plainly, then again if it still holds bins - the server refuses
-    // a non-empty delete unless force=1, so nothing is lost by accident
+    // Ask once plainly, then again if it still holds bins - the server refuses
+    // a non-empty delete unless force=1. Nothing is lost either way: the bins
+    // move to the unfiled bucket rather than going with the category.
     if (!window.confirm(`Delete category "${cat}"?`)) return;
     let res = await fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}`, { method: 'DELETE' });
     if (res.status === 409) {
       const { bins } = await res.json();
       if (!window.confirm(
-        `"${cat}" still holds ${bins} bin record(s). Delete anyway?`)) return;
+        `"${cat}" holds ${bins} bin record(s).\n\n` +
+        `They will be moved to "${UNCATEGORIZED}", not deleted. Continue?`)) return;
       res = await fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}?force=1`, { method: 'DELETE' });
     }
     if (!res.ok) {
