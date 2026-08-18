@@ -292,6 +292,10 @@ const Sidebar = forwardRef(function Sidebar(
   const deleteCategory = async () => {
     if (!editModal) return;
     const { cat } = editModal;
+    if (cat === UNCATEGORIZED) {   // the button is hidden too; belt and braces
+      window.alert(`"${UNCATEGORIZED}" is where unfiled bins land - it cannot be deleted.`);
+      return;
+    }
     // ask once plainly, then again if it still holds bins - the server refuses
     // a non-empty delete unless force=1, so nothing is lost by accident
     if (!window.confirm(`Delete category "${cat}"?`)) return;
@@ -410,15 +414,29 @@ const Sidebar = forwardRef(function Sidebar(
           ...(topLevel ? { paddingLeft: 10 } : {}),   // nothing above it to indent under
           ...(isSelected && !isExpanded ? S.catRowActive : {}),
         }}>
+          {/* Pinned top-level row reads as a section, not a folder inside one:
+              a chevron like the parent rows rather than a folder icon, and the
+              label in the display face, all caps, to match them. */}
           <button style={S.catFolderBtn} onClick={() => toggleCategory(cat)}>
             <Icon
-              path={isExpanded ? mdiFolderOpen : mdiFolder}
-              size={0.75}
+              path={topLevel
+                ? (isExpanded ? mdiChevronDown : mdiChevronRight)
+                : (isExpanded ? mdiFolderOpen : mdiFolder)}
+              size={topLevel ? 0.65 : 0.75}
               color={isSelected ? 'var(--accent)' : 'var(--text-faint)'}
             />
           </button>
           <button
-            style={S.catLabel(isSelected && !isExpanded)}
+            style={{
+              ...S.catLabel(isSelected && !isExpanded),
+              ...(topLevel ? {
+                fontFamily: 'var(--font-display)',
+                fontWeight: 700,
+                fontSize: 14,
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+              } : {}),
+            }}
             onClick={() => { onSelect(cat); setSelectedSubcategory(null); }}
           >
             {cat}
@@ -553,11 +571,15 @@ const Sidebar = forwardRef(function Sidebar(
           />
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={saveEditCategory} style={{ ...S.saveBtn, flex: 1 }}>Save</button>
-            <button onClick={deleteCategory}
-                    style={{ ...S.saveBtn, flex: 1, background: 'transparent',
-                             color: 'var(--red)', border: '1px solid var(--red)' }}>
-              Delete
-            </button>
+            {/* No delete for the unfiled-bins bucket - the Pi files scanned but
+                unknown labels there, so it has to exist. */}
+            {editModal?.cat !== UNCATEGORIZED && (
+              <button onClick={deleteCategory}
+                      style={{ ...S.saveBtn, flex: 1, background: 'transparent',
+                               color: 'var(--red)', border: '1px solid var(--red)' }}>
+                Delete
+              </button>
+            )}
           </div>
         </Modal>
       )}
