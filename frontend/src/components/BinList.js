@@ -47,6 +47,12 @@ async function putCategory(category, bins) {
   });
 }
 
+// Where a bin goes when it is added without picking a category. Same name the
+// Pi's inventory.ensure() uses for a scanned label nobody has filed yet, so the
+// two paths land in one place. POSTing a bin to a category file that does not
+// exist creates it, so this needs no setup.
+const UNCATEGORIZED = 'uncategorized';
+
 const inputStyle = {
   width: '100%',
   marginBottom: 10,
@@ -59,10 +65,14 @@ const inputStyle = {
   outline: 'none',
 };
 
-export default function BinList({ category, categoryList, parentName, selectedSubcategory, onBinsChanged }) {
+export default function BinList({ category, allCategories, categoryList, parentName, selectedSubcategory, onBinsChanged }) {
   const [bins, setBins] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editIndex, setEditIndex] = useState(null);
+  // Which category a NEW bin is filed under. Separate from `category` (what is
+  // on screen) so a bin can be added from anywhere - including a parent group,
+  // or with nothing selected at all - without first navigating to a category.
+  const [target, setTarget] = useState(UNCATEGORIZED);
   const [newBin, setNewBin] = useState({ name: '', barcode: '', status: 'in', subcategory: '', request: 'no' });
   // Barcodes with a retrieve request sent but not yet acknowledged by the vehicle
   const [requested, setRequested] = useState(new Set());
@@ -170,20 +180,22 @@ export default function BinList({ category, categoryList, parentName, selectedSu
 
   const handleAddOrUpdateBin = async () => {
     if (!newBin.name || !newBin.barcode) return;
-    // Writes go to ONE category file. With a parent group selected there is no
-    // single target, and posting to `/category/undefined` looked like it worked
-    // while the bin landed in a stray file and vanished on the next refresh.
-    if (!category) {
-      window.alert('Pick a single category before adding a bin.');
-      return;
-    }
     let res;
     if (editIndex !== null) {
+      // An edit rewrites the whole file it came from, so it needs the single
+      // category on screen. From a parent group the bins are merged out of
+      // several files and there is no one file to write back to - PUTting to
+      // `/category/undefined` would create a stray file and lose them.
+      if (!category) {
+        window.alert('Open a single category to edit a bin.');
+        return;
+      }
       const updatedBins = [...bins];
       updatedBins[editIndex] = newBin;
       res = await putCategory(category, updatedBins);
     } else {
-      res = await fetch(`${BASE_URL}/category/${encodeURIComponent(category)}`, {
+      // Adds go wherever the form says, which is why they work from anywhere.
+      res = await fetch(`${BASE_URL}/category/${encodeURIComponent(target)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newBin),
@@ -195,9 +207,12 @@ export default function BinList({ category, categoryList, parentName, selectedSu
     }
     // Re-read from the server instead of patching local state, so what is on
     // screen is what actually persisted - no silent divergence until a refresh.
-    const saved = await fetch(`${BASE_URL}/category/${encodeURIComponent(category)}`)
-      .then(r => r.json()).catch(() => null);
-    setBins(Array.isArray(saved) ? saved : bins);
+    // Re-read the category ON SCREEN, which may not be the one just written to.
+    if (category) {
+      const saved = await fetch(`${BASE_URL}/category/${encodeURIComponent(category)}`)
+        .then(r => r.json()).catch(() => null);
+      setBins(Array.isArray(saved) ? saved : bins);
+    }
     setShowForm(false);
     setEditIndex(null);
     setNewBin({ name: '', barcode: '', status: 'in', subcategory: '', request: 'no' });
@@ -211,6 +226,10 @@ export default function BinList({ category, categoryList, parentName, selectedSu
   };
 
   const handleDeleteBin = async (index) => {
+    if (!category) {          // see handleAddOrUpdateBin - no single file to rewrite
+      window.alert('Open a single category to delete a bin.');
+      return;
+    }
     if (!window.confirm('Delete this bin?')) return;
     const updatedBins = [...bins];
     updatedBins.splice(index, 1);
@@ -246,29 +265,34 @@ export default function BinList({ category, categoryList, parentName, selectedSu
           {parentName ? parentName : category ? category : 'Select a category'}
           {selectedSubcategory && <span style={{ color: 'var(--text-faint)', fontWeight: 600 }}> / {selectedSubcategory}</span>}
         </span>
-        {category && !parentName && (
-          <button
-            onClick={() => { setShowForm(true); setEditIndex(null); setNewBin({ name: '', barcode: '', status: 'in', subcategory: '' }); }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              backgroundColor: 'var(--accent)',
-              color: '#ffffff',
-              border: 'none',
-              padding: '6px 14px',
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              fontSize: 14,
-              textTransform: 'uppercase',
-              cursor: 'pointer',
-              letterSpacing: '1px',
-              borderRadius: 8,
-            }}
-          >
-            <Icon path={mdiPlus} size={0.7} color="#ffffff" /> Add Bin
-          </button>
-        )}
+        {/* Always available - a bin can be filed from anywhere, including a
+          parent group or a fresh install with nothing selected. */}
+        <button
+          onClick={() => {
+            setShowForm(true);
+            setEditIndex(null);
+            setTarget(category || UNCATEGORIZED);   // sensible default, still changeable
+            setNewBin({ name: '', barcode: '', status: 'in', subcategory: '' });
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            backgroundColor: 'var(--accent)',
+            color: '#ffffff',
+            border: 'none',
+            padding: '6px 14px',
+            fontFamily: 'var(--font-display)',
+            fontWeight: 700,
+            fontSize: 14,
+            textTransform: 'uppercase',
+            cursor: 'pointer',
+            letterSpacing: '1px',
+            borderRadius: 8,
+          }}
+        >
+          <Icon path={mdiPlus} size={0.7} color="#ffffff" /> Add Bin
+        </button>
       </div>
 
       <div style={{ padding: 16 }}>
@@ -277,6 +301,18 @@ export default function BinList({ category, categoryList, parentName, selectedSu
             <h3 style={{ margin: '0 0 14px', fontFamily: 'var(--font-display)', fontSize: 17, letterSpacing: '1px', textTransform: 'uppercase', color: 'var(--text)' }}>
               {editIndex !== null ? 'Edit Bin' : 'Add Bin'}
             </h3>
+            {editIndex === null && (
+              <select
+                value={target}
+                onChange={e => setTarget(e.target.value)}
+                style={inputStyle}
+              >
+                {!(allCategories || []).includes(UNCATEGORIZED) && (
+                  <option value={UNCATEGORIZED}>Uncategorized</option>
+                )}
+                {(allCategories || []).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
             <input placeholder="Name" value={newBin.name} onChange={e => setNewBin({ ...newBin, name: e.target.value })} style={inputStyle} />
             <input placeholder="Barcode" value={newBin.barcode} onChange={e => setNewBin({ ...newBin, barcode: e.target.value })} style={inputStyle} />
             <input placeholder="Subcategory" value={newBin.subcategory} onChange={e => setNewBin({ ...newBin, subcategory: e.target.value })} style={{ ...inputStyle, marginBottom: 16 }} />

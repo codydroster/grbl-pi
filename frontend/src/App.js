@@ -99,6 +99,7 @@ function App() {
               />
               <BinList
                 category={selectedCategory}
+                allCategories={categories}
                 categoryList={selectedParent?.categories}
                 parentName={selectedParent?.name}
                 selectedSubcategory={selectedSubcategory?.subcat}
