@@ -5,6 +5,11 @@ import Modal from './Modal';
 import { BASE_URL } from '../config';
 
 const DEFAULT_PARENT = 'General';
+// Pinned above every parent group and never inside one. This is the bucket the
+// Pi's inventory.ensure() files a scanned-but-unknown label into, and the
+// default target of the Add Bin form, so it wants to be the first thing seen -
+// not buried inside whichever parent it would otherwise sort into.
+const UNCATEGORIZED = 'uncategorized';
 
 const S = {
   sidebar: {
@@ -377,9 +382,13 @@ const Sidebar = forwardRef(function Sidebar(
     });
   };
 
-  // Group categories by parent
+  // Group categories by parent. UNCATEGORIZED is skipped on purpose - it is
+  // rendered above the groups, so it must not also appear inside one, and a
+  // parent accidentally assigned to it in parents.json is ignored rather than
+  // pulling it back into a group.
   const grouped = {};
   for (const cat of categories) {
+    if (cat === UNCATEGORIZED) continue;
     const parentName = parents[cat] || DEFAULT_PARENT;
     if (!grouped[parentName]) grouped[parentName] = [];
     grouped[parentName].push(cat);
@@ -391,12 +400,16 @@ const Sidebar = forwardRef(function Sidebar(
     return a.localeCompare(b);
   });
 
-  const renderCategory = (cat) => {
+  const renderCategory = (cat, topLevel = false) => {
     const isSelected = cat === selectedCategory;
     const isExpanded = expandedCategories.has(cat);
     return (
       <div key={cat}>
-        <div style={{ ...S.catRow, ...(isSelected && !isExpanded ? S.catRowActive : {}) }}>
+        <div style={{
+          ...S.catRow,
+          ...(topLevel ? { paddingLeft: 10 } : {}),   // nothing above it to indent under
+          ...(isSelected && !isExpanded ? S.catRowActive : {}),
+        }}>
           <button style={S.catFolderBtn} onClick={() => toggleCategory(cat)}>
             <Icon
               path={isExpanded ? mdiFolderOpen : mdiFolder}
@@ -469,6 +482,8 @@ const Sidebar = forwardRef(function Sidebar(
           <Icon path={mdiPlus} size={0.8} color="var(--accent)" />
         </button>
       </div>
+
+      {categories.includes(UNCATEGORIZED) && renderCategory(UNCATEGORIZED, true)}
 
       {sortedParents.map(parentName => {
         const isParentSelected = selectedParent === parentName;

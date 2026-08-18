@@ -5,7 +5,6 @@ import {
   mdiPencilOutline,
   mdiTrashCanOutline,
 } from '@mdi/js';
-import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import Modal from './Modal';
 import { BASE_URL, WS_URL } from '../config';
 
@@ -163,21 +162,6 @@ export default function BinList({ category, allCategories, categoryList, parentN
     }
   };
 
-  const handleDragEnd = async ({ source, destination, draggableId }) => {
-    if (!destination) return;
-    const fromSubcat = source.droppableId;
-    const toSubcat = destination.droppableId;
-    const grouped = groupBins(bins);
-    const draggedBin = grouped[fromSubcat].find(bin => bin.barcode === draggableId);
-    if (!draggedBin) return;
-    grouped[fromSubcat] = grouped[fromSubcat].filter(b => b.barcode !== draggableId);
-    grouped[toSubcat] = [...(grouped[toSubcat] || []), { ...draggedBin, subcategory: toSubcat }];
-    const newList = Object.values(grouped).flat();
-    setBins(newList);
-    await putCategory(category, newList);
-    onBinsChanged?.();
-  };
-
   const handleAddOrUpdateBin = async () => {
     if (!newBin.name || !newBin.barcode) return;
     let res;
@@ -325,7 +309,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
           </Modal>
         )}
 
-        <DragDropContext onDragEnd={handleDragEnd}>
+        <div>
           {Object.entries(visibleGroups).map(([subcat, list]) => (
             <div key={subcat} style={{ marginBottom: 28 }}>
               <div style={{
@@ -346,92 +330,76 @@ export default function BinList({ category, allCategories, categoryList, parentN
                 {subcat}
                 <span style={{ marginLeft: 'auto', color: 'var(--text-faint)', letterSpacing: '1px' }}>{list.length.toString().padStart(2, '0')}</span>
               </div>
-              <Droppable droppableId={subcat} direction="horizontal">
-                {(provided) => (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {list.map((bin) => (
                   <div
-                    ref={provided.innerRef}
-                    {...provided.droppableProps}
-                    style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}
+                    key={bin.barcode}
+                    className={requested.has(bin.barcode) ? 'bin-requested' : getBinAnimationClass(bin)}
+                    onClick={() => handleBinClick(bin.barcode)}
+                    style={{
+                      width: 152,
+                      padding: '10px 12px 9px',
+                      borderRadius: 8,
+                      backgroundColor: 'var(--raised)',
+                      border: requested.has(bin.barcode)
+                        ? '1px dashed var(--accent)'
+                        : `1px solid ${getBinBorderColor(bin)}`,
+                      borderTop: requested.has(bin.barcode)
+                        ? '3px dashed var(--accent)'
+                        : `3px solid ${getBinBorderColor(bin)}`,
+                      fontSize: 12,
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+                      position: 'relative',
+                      userSelect: 'none',
+                      cursor: 'pointer',
+                    }}
                   >
-                    {list.map((bin, index) => (
-                      <Draggable key={bin.barcode} draggableId={bin.barcode} index={index}>
-                        {(provided) => (
-                          <div
-                            ref={provided.innerRef}
-                            {...provided.draggableProps}
-                            {...provided.dragHandleProps}
-                            className={requested.has(bin.barcode) ? 'bin-requested' : getBinAnimationClass(bin)}
-                            onClick={() => handleBinClick(bin.barcode)}
-                            style={{
-                              width: 152,
-                              padding: '10px 12px 9px',
-                              borderRadius: 8,
-                              backgroundColor: 'var(--raised)',
-                              border: requested.has(bin.barcode)
-                                ? '1px dashed var(--accent)'
-                                : `1px solid ${getBinBorderColor(bin)}`,
-                              borderTop: requested.has(bin.barcode)
-                                ? '3px dashed var(--accent)'
-                                : `3px solid ${getBinBorderColor(bin)}`,
-                              fontSize: 12,
-                              boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
-                              position: 'relative',
-                              userSelect: 'none',
-                              cursor: 'pointer',
-                              ...provided.draggableProps.style,
-                            }}
-                          >
-                            <div style={{ position: 'absolute', top: 5, right: 4, display: 'flex' }}>
-                              <button
-                                onClick={e => { e.stopPropagation(); handleEditBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--text-faint)' }}
-                                title="Edit"
-                              >
-                                <Icon path={mdiPencilOutline} size={0.6} />
-                              </button>
-                              <button
-                                onClick={e => { e.stopPropagation(); handleDeleteBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--red)' }}
-                                title="Delete"
-                              >
-                                <Icon path={mdiTrashCanOutline} size={0.6} />
-                              </button>
-                            </div>
+                    <div style={{ position: 'absolute', top: 5, right: 4, display: 'flex' }}>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleEditBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--text-faint)' }}
+                        title="Edit"
+                      >
+                        <Icon path={mdiPencilOutline} size={0.6} />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDeleteBin(bins.findIndex(b => b.barcode === bin.barcode)); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 3px', color: 'var(--red)' }}
+                        title="Delete"
+                      >
+                        <Icon path={mdiTrashCanOutline} size={0.6} />
+                      </button>
+                    </div>
 
-                            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3, paddingRight: 36, color: 'var(--text)' }}>
-                              {bin.name}
-                            </div>
-                            <div style={{ color: 'var(--text-faint)', fontSize: 10, marginBottom: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.5px' }}>
-                              {bin.barcode}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              {requested.has(bin.barcode) ? (
-                                <>
-                                  <span className="led led-accent" />
-                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: 'var(--accent)' }}>
-                                    REQUESTED…
-                                  </span>
-                                </>
-                              ) : (
-                                <>
-                                  <span className={`led ${getBinStatus(bin).led}`} />
-                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: getBinStatus(bin).color }}>
-                                    {getBinStatus(bin).label}
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </Draggable>
-                    ))}
-                    {provided.placeholder}
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3, paddingRight: 36, color: 'var(--text)' }}>
+                      {bin.name}
+                    </div>
+                    <div style={{ color: 'var(--text-faint)', fontSize: 10, marginBottom: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.5px' }}>
+                      {bin.barcode}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {requested.has(bin.barcode) ? (
+                        <>
+                          <span className="led led-accent" />
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: 'var(--accent)' }}>
+                            REQUESTED…
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className={`led ${getBinStatus(bin).led}`} />
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: getBinStatus(bin).color }}>
+                            {getBinStatus(bin).label}
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
-                )}
-              </Droppable>
+                ))}
+              </div>
             </div>
           ))}
-        </DragDropContext>
+        </div>
       </div>
     </div>
   );
