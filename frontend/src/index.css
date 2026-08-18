@@ -1,18 +1,23 @@
 :root {
-  /* Clean light palette */
-  --bg:        #f5f6f8;   /* app background */
-  --panel:     #ffffff;   /* sidebar / header panels */
+  /* Neutral warm-grey palette. Deliberately quiet: the only colour that
+     carries meaning is the status of a bin, so nothing else competes with it.
+     The accent is a graphite, not a hue - it marks selection and actions
+     through contrast rather than by being bright. */
+  --bg:        #f4f4f2;   /* app background */
+  --panel:     #fbfbfa;   /* sidebar / header panels */
   --raised:    #ffffff;   /* cards, inputs */
-  --line:      #dfe3e8;   /* borders */
-  --line-soft: #eceff3;
-  --text:      #1c2430;
-  --text-dim:  #5b6573;
-  --text-faint:#97a0ac;
-  --accent:     #03a9f4;   /* primary accent — Home Assistant blue */
-  --accent-dim: #0288d1;
-  --green:     #1d9e52;   /* in stock */
-  --green-dim: #157a3e;
-  --red:       #d8423c;   /* out / error */
+  --line:      #dedcd8;   /* borders */
+  --line-soft: #ecebe7;
+  --text:      #26262a;
+  --text-dim:  #61605c;
+  --text-faint:#86847f;   /* barcodes etc - darker than the old blue-grey, which was under 2.5:1 */
+  --accent:     #4f5157;   /* graphite - selection, primary buttons */
+  --accent-dim: #34363b;
+  /* Muted enough to sit in a quiet palette, still far enough apart to read
+     at a glance on the status LEDs, which is the one thing colour is for. */
+  --green:     #4a7a52;   /* in stock */
+  --green-dim: #3a6141;
+  --red:       #a85a4e;   /* out / error */
   --font-display: 'Saira Condensed', 'Arial Narrow', sans-serif;
   --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
   --font-body: 'IBM Plex Sans', Arial, sans-serif;

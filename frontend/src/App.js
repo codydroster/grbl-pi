@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import BinList from './components/BinList';
-import DevPage from './components/DevPage';
 import DebugPage from './components/DebugPage';
 import { BASE_URL } from './config';
 import './App.css';
@@ -78,7 +77,6 @@ function App() {
         <span className="tagline">Automated Storage // 4×8×3</span>
         <nav className="app-nav">
           <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Bins</NavLink>
-          <NavLink to="/dev" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Dev</NavLink>
           <NavLink to="/debug" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Debug</NavLink>
         </nav>
       </div>
@@ -107,7 +105,6 @@ function App() {
               />
             </>
           } />
-          <Route path="/dev" element={<DevPage />} />
           <Route path="/debug" element={<DebugPage />} />
         </Routes>
       </div>
