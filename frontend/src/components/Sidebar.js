@@ -537,7 +537,10 @@ const Sidebar = forwardRef(function Sidebar(
                 {parentName}
               </span>
             </div>
-            {expandedParents.has(parentName) && grouped[parentName].map(renderCategory)}
+            {/* Wrap the call - passing renderCategory to map directly hands it
+                the INDEX as its second argument, so every category after the
+                first got topLevel=1 and rendered as a pinned row. */}
+            {expandedParents.has(parentName) && grouped[parentName].map(cat => renderCategory(cat))}
           </div>
         );
       })}
