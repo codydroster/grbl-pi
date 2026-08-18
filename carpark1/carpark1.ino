@@ -116,14 +116,16 @@ const uint32_t DEPTH_TIMEOUT_MS = 15000; // safety: give up on a depth move
 // advances the reading grows by roughly a creep-step each time, and the moment
 // the bin is stopped the reading stops growing. DEPTH_STALL_MM / DEPTH_MAX_STILL
 // are reused for that - "advanced less than 5mm, three readings running".
-// THE WHOLE APPROACH IS AT CREEP SPEED, deliberately. There is no safe distance
-// to run in fast: a full output lane can have a bin as shallow as depth 1, and
-// the impact would land at DRIVE_SPEED. Slow all the way is the price of not
-// knowing what is in there. Worst case is the full lane at ~22mm/s, about 27s,
-// hence the much longer timeout. If that is too slow, the knobs are DROP_SPEED
-// (measure it first with "car AF<speed> 800") or a fast run in to a depth you
-// are willing to declare always clear.
-const int      DROP_SPEED = DEPTH_CREEP_SPEED;
+// THE WHOLE APPROACH IS AT ONE REDUCED SPEED, never DRIVE_SPEED: no distance
+// into this lane can be declared safe to run in fast, because a full one can
+// hold a bin as shallow as depth 1. 150 is the chosen middle ground - gentle
+// enough to meet a bin with, quick enough that a deep lane does not take half a
+// minute (at DEPTH_CREEP_SPEED's ~22mm/s the full lane was ~27s).
+// UNMEASURED in mm/s: scaling off 146mm/s at PWM 250 suggests very roughly
+// 90mm/s, i.e. ~60mm of travel per rangefinder reading, so the bin can lean on
+// what it meets for up to DEPTH_MAX_STILL readings before this notices.
+// Measure with "car AF150 800" and lower it if the contact looks too firm.
+const int      DROP_SPEED = 150;
 const uint32_t DROP_TIMEOUT_MS = 40000;
 
 // Rangefinder: laser distance module on Serial4 (RX4 pin 16 / TX4 pin 17),
