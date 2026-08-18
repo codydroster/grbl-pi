@@ -379,6 +379,13 @@ async def patch_category(request):
     body = await request.json()
     new_name, parent = body.get("newName"), body.get("parent")
     if new_name is not None:
+        # The unfiled bucket is addressed BY NAME - inventory.ensure() files
+        # unknown labels there, delete_category moves bins there, and the
+        # sidebar pins it by that string. Renaming it would silently orphan all
+        # three and quietly mint an empty replacement on the next scan.
+        if name == inventory.UNCATEGORIZED:
+            return bad('"%s" cannot be renamed - it is where unfiled bins land'
+                       % inventory.UNCATEGORIZED, 409)
         new_name = clean_name(new_name)
         if new_name is None:
             return bad("Invalid new name")

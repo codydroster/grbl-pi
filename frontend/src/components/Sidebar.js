@@ -359,6 +359,8 @@ const Sidebar = forwardRef(function Sidebar(
 
   const openEditCategory = (e, cat) => {
     e.stopPropagation();
+    if (cat === UNCATEGORIZED) return;   // no pencil is rendered for it either
+
     setEditName(cat);
     setEditParent(parents[cat] || '');
     setEditModal({ type: 'category', cat });
@@ -458,9 +460,13 @@ const Sidebar = forwardRef(function Sidebar(
           >
             {cat}
           </button>
-          <button style={S.editBtn(isSelected && !isExpanded)} onClick={e => openEditCategory(e, cat)} title="Edit category">
-            <Icon path={mdiPencilOutline} size={0.55} />
-          </button>
+          {/* Nothing to edit on the pinned row: its name is load-bearing, so
+              it cannot be renamed, and it cannot be deleted either. */}
+          {!topLevel && (
+            <button style={S.editBtn(isSelected && !isExpanded)} onClick={e => openEditCategory(e, cat)} title="Edit category">
+              <Icon path={mdiPencilOutline} size={0.55} />
+            </button>
+          )}
         </div>
 
         {!topLevel && isExpanded && binsMap[cat] && (
