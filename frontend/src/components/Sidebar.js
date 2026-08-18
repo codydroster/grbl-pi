@@ -449,7 +449,20 @@ const Sidebar = forwardRef(function Sidebar(
         {isExpanded && binsMap[cat] && (
           <div style={S.subcatSection}>
             {binsMap[cat].length === 0 && <div style={S.emptyMsg}>No bins</div>}
-            {[...new Set(binsMap[cat].map(bin => bin.subcategory || 'Uncategorized'))].map(subcat => {
+            {/* No subcategory layer in the unfiled bucket - it holds bins that
+                have no home yet, so nesting them under a subcategory called
+                "Uncategorized" inside a category called "uncategorized" was
+                a level of tree that said nothing. List the bins straight. */}
+            {topLevel && binsMap[cat].map(bin => (
+              <div
+                key={bin.barcode}
+                style={S.binItem}
+                onClick={() => { setSelectedSubcategory(null); onSelect(cat); }}
+              >
+                {bin.name}
+              </div>
+            ))}
+            {!topLevel && [...new Set(binsMap[cat].map(bin => bin.subcategory || 'Uncategorized'))].map(subcat => {
               const isSubSelected = selectedSubcategory?.cat === cat && selectedSubcategory?.subcat === subcat;
               const isSubExpanded = expandedSubcats[cat]?.has(subcat);
               return (

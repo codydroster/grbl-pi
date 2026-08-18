@@ -72,7 +72,11 @@ export default function BinList({ category, allCategories, categoryList, parentN
   // on screen) so a bin can be added from anywhere - including a parent group,
   // or with nothing selected at all - without first navigating to a category.
   const [target, setTarget] = useState(UNCATEGORIZED);
-  const [newBin, setNewBin] = useState({ name: '', barcode: '', status: 'in', subcategory: '', request: 'no' });
+  // A hand-added bin starts OUT. Typing a bin into the roster records that it
+  // exists, not that the machine is holding it - only a store mission that
+  // actually scans and shelves it can say that, and do_store flips it to 'in'
+  // when it finishes. Defaulting to 'in' claimed stock the rack did not have.
+  const [newBin, setNewBin] = useState({ name: '', barcode: '', status: 'out', subcategory: '', request: 'no' });
   // Barcodes with a retrieve request sent but not yet acknowledged by the vehicle
   const [requested, setRequested] = useState(new Set());
   const requestTimers = useRef({});
@@ -175,14 +179,18 @@ export default function BinList({ category, allCategories, categoryList, parentN
         return;
       }
       const updatedBins = [...bins];
-      updatedBins[editIndex] = newBin;
+      updatedBins[editIndex] = category === UNCATEGORIZED
+        ? { ...newBin, subcategory: '' }   // no subcategory layer in this one
+        : newBin;
       res = await putCategory(category, updatedBins);
     } else {
       // Adds go wherever the form says, which is why they work from anywhere.
+      // Nothing gets a subcategory in the unfiled bucket - it has no such layer.
+      const payload = target === UNCATEGORIZED ? { ...newBin, subcategory: '' } : newBin;
       res = await fetch(`${BASE_URL}/category/${encodeURIComponent(target)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newBin),
+        body: JSON.stringify(payload),
       });
     }
     if (!res?.ok) {
@@ -199,7 +207,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
     }
     setShowForm(false);
     setEditIndex(null);
-    setNewBin({ name: '', barcode: '', status: 'in', subcategory: '', request: 'no' });
+    setNewBin({ name: '', barcode: '', status: 'out', subcategory: '', request: 'no' });
     onBinsChanged?.();
   };
 
@@ -222,8 +230,19 @@ export default function BinList({ category, allCategories, categoryList, parentN
     onBinsChanged?.();
   };
 
-  const grouped = groupBins(bins);
-  const visibleGroups = selectedSubcategory
+  // The unfiled bucket has no subcategory layer - it is solely bins without a
+  // home, so grouping them under a heading called "Uncategorized" inside a
+  // category called "uncategorized" only added a row that said nothing.
+  // Adding into the unfiled bucket offers no subcategory field, for the same
+  // reason the view has no subcategory rows.
+  const hideSubcat = editIndex === null
+    ? target === UNCATEGORIZED           // adding: depends on where it is going
+    : category === UNCATEGORIZED;        // editing: depends on where it already is
+  const flat = category === UNCATEGORIZED;
+  const grouped = flat
+    ? (bins.length ? { all: bins } : {})
+    : groupBins(bins);
+  const visibleGroups = (!flat && selectedSubcategory)
     ? (grouped[selectedSubcategory] ? { [selectedSubcategory]: grouped[selectedSubcategory] } : {})
     : grouped;
 
@@ -256,7 +275,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
             setShowForm(true);
             setEditIndex(null);
             setTarget(category || UNCATEGORIZED);   // sensible default, still changeable
-            setNewBin({ name: '', barcode: '', status: 'in', subcategory: '' });
+            setNewBin({ name: '', barcode: '', status: 'out', subcategory: '' });
           }}
           style={{
             display: 'flex',
@@ -298,8 +317,11 @@ export default function BinList({ category, allCategories, categoryList, parentN
               </select>
             )}
             <input placeholder="Name" value={newBin.name} onChange={e => setNewBin({ ...newBin, name: e.target.value })} style={inputStyle} />
-            <input placeholder="Barcode" value={newBin.barcode} onChange={e => setNewBin({ ...newBin, barcode: e.target.value })} style={inputStyle} />
-            <input placeholder="Subcategory" value={newBin.subcategory} onChange={e => setNewBin({ ...newBin, subcategory: e.target.value })} style={{ ...inputStyle, marginBottom: 16 }} />
+            <input placeholder="Barcode" value={newBin.barcode} onChange={e => setNewBin({ ...newBin, barcode: e.target.value })}
+                   style={hideSubcat ? { ...inputStyle, marginBottom: 16 } : inputStyle} />
+            {!hideSubcat && (
+              <input placeholder="Subcategory" value={newBin.subcategory} onChange={e => setNewBin({ ...newBin, subcategory: e.target.value })} style={{ ...inputStyle, marginBottom: 16 }} />
+            )}
             <button
               onClick={handleAddOrUpdateBin}
               style={{ backgroundColor: 'var(--accent)', color: '#ffffff', border: 'none', padding: '8px 20px', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, letterSpacing: '1px', textTransform: 'uppercase', cursor: 'pointer', borderRadius: 8 }}
@@ -312,7 +334,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
         <div>
           {Object.entries(visibleGroups).map(([subcat, list]) => (
             <div key={subcat} style={{ marginBottom: 28 }}>
-              <div style={{
+              {!flat && <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
@@ -329,7 +351,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
                 <span style={{ width: 10, height: 10, background: 'var(--accent)', flexShrink: 0 }} />
                 {subcat}
                 <span style={{ marginLeft: 'auto', color: 'var(--text-faint)', letterSpacing: '1px' }}>{list.length.toString().padStart(2, '0')}</span>
-              </div>
+              </div>}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {list.map((bin) => (
                   <div
