@@ -79,19 +79,6 @@ def barcode_index(skip=None):
     return idx
 
 
-def set_bin_status(barcode, status):
-    # persist a status change wherever that barcode lives
-    for f in BINS_DIR.glob("*.json"):
-        bins = read_json(f, [])
-        hit = [b for b in bins if b.get("barcode") == barcode]
-        if hit:
-            for b in hit:
-                b["status"] = status
-            write_json(f, bins)
-            return True
-    return False
-
-
 # ---------- broadcast to every connected page ----------
 
 def broadcast(app, msg):
@@ -114,11 +101,6 @@ def crane_log(emit, line):
     emit({"topic": "machine/crane/response", "payload": {"response": line}})
 
 
-def update_status(app, emit, barcode, status):
-    set_bin_status(barcode, status)
-    emit({"barcode": barcode, "status": status})   # flat - what BinList expects
-
-
 # ---------- machine commands (serialized - one thing at a time) ----------
 
 def pick_carriage(app):
@@ -128,8 +110,12 @@ def pick_carriage(app):
 def retrieve_blocking(app, emit, n, barcode):
     # runs in the executor thread; all serial I/O lives here. Depth-aware, so it
     # fetches the bin at the recorded slot rather than whatever is at the front.
+    # on_status only BROADCASTS - retrieve_bin writes the record itself, so a
+    # 'get' typed on the Debug page persists the same way this does.
     return main.retrieve_bin(app["carriages"], n,
-                             lambda l: crane_log(emit, l), barcode)
+                             lambda l: crane_log(emit, l), barcode,
+                             on_status=lambda code, status: emit({"barcode": code,
+                                                                  "status": status}))
 
 
 def store_blocking(app, emit, n):
@@ -154,10 +140,12 @@ async def do_retrieve(app, barcode):
         crane_log(emit, "machine busy - retrieve %s ignored" % barcode)
         return
     async with app["lock"]:
-        update_status(app, emit, barcode, "out-pending")
-        ok = await asyncio.get_event_loop().run_in_executor(
+        # No optimistic status, same as do_store: the bin is only out-pending
+        # once its own label has been read off the forks. Asking for it is not
+        # evidence the machine found it - the lane can disagree with slots.json,
+        # which is exactly why every pickup is scanned.
+        await asyncio.get_event_loop().run_in_executor(
             None, retrieve_blocking, app, emit, n, barcode)
-        update_status(app, emit, barcode, "out" if ok else "in")
 
 
 async def do_store(app, barcode):

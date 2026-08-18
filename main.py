@@ -286,7 +286,7 @@ def put_bin(carriages, active, say, seq, code, dest, old_key=None):
     return True
 
 
-def retrieve_bin(carriages, active, say, barcode):
+def retrieve_bin(carriages, active, say, barcode, on_status=None):
     """Fetch a stored bin by barcode, digging out anything parked in front of it.
 
     The car enters a lane EMPTY, and the rangefinder ranges off the bin rather
@@ -295,6 +295,11 @@ def retrieve_bin(carriages, active, say, barcode):
     Reaching a deeper bin therefore means pulling the ones ahead of it out first
     and re-shelving them elsewhere. Every pickup is scanned, so a lane whose
     real contents disagree with slots.json is caught rather than acted on.
+
+    STATUS FOLLOWS THE SCANNER, as in store_bin: the target is only marked
+    out-pending once its own label has come back off the forks, not when someone
+    asked for it. Blockers are left alone - they go straight back on a shelf, so
+    'in' never stops being true for them.
     """
     key = slots.find(barcode)
     if key is None:
@@ -306,6 +311,11 @@ def retrieve_bin(carriages, active, say, barcode):
 
     def seq(ch):                         # per-command timeout, see carpark.TIMEOUTS
         return carpark.run_sequence(uart, ch, report=lambda l: say("  " + l))
+
+    def status(code, value):
+        inventory.set_status(code, value)
+        if on_status:
+            on_status(code, value)
 
     if depth > 1:
         say("%s is at depth %d - bins in front of it come out first"
@@ -338,22 +348,31 @@ def retrieve_bin(carriages, active, say, barcode):
 
         got_key = slots.find(got)
         if got == barcode:
+            # Confirmed by its own label, and already off the shelf on the forks.
+            # Every exit from here leaves it out of the rack, so the only
+            # question is whether it reached the output lane.
+            status(got, "out-pending")
             say("carriage -> output %d,%d" % OUTPUT)
             if not goto_slot(carriages, active, *OUTPUT):
                 say("bin is on the car, but cannot reach output %d,%d" % OUTPUT)
+                status(got, "out")
                 return False
             say("feeling for the drop point")   # depth there is whatever a
             if not seq("P"):                    # human has left behind
+                status(got, "out")
                 return False
             say("lift down")                    # set it down where it stopped
             if not seq("d"):
+                status(got, "out")
                 return False
             say("car home")
             if not seq("g"):
+                status(got, "out")
                 return False
             store = slots.load()         # cleared only once it is really out
             store.pop(got_key or key, None)
             slots.save(store)
+            status(got, "out")
             say("retrieved %s - dropped at output %d,%d" % ((barcode,) + OUTPUT))
             return True
 
@@ -453,7 +472,7 @@ def dispatch(carriages, active, line, say=print, on_status=None):
                       if len(parts) == 4 else None)
             store_bin(carriages, active, say, target, on_status=on_status)
         elif cmd == "get":        # fetch a stored bin by barcode
-            retrieve_bin(carriages, active, say, parts[1])
+            retrieve_bin(carriages, active, say, parts[1], on_status=on_status)
         elif cmd == "slots":
             say(slots.load() or "no slots assigned yet")
             say("next free: %s" % slots.next_free(rack_lanes()))
