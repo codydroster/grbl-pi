@@ -106,13 +106,17 @@ export default function BinList({ category, allCategories, categoryList, parentN
     load();
   }, [category]);
 
-  // Parent group — fetch all categories and merge
+  // Parent group - fetch every category in it and merge. Each bin is tagged
+  // with the category it came out of, because once they are merged the card is
+  // the only place that can still say which one that was. Underscore-prefixed
+  // and added client-side only: it is never written back (edits are blocked in
+  // this view anyway, since there is no single file to rewrite).
   useEffect(() => {
     if (!categoryList?.length) return;
     Promise.all(categoryList.map(cat =>
       fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}`)
         .then(res => res.json())
-        .then(data => (Array.isArray(data) ? data : []))
+        .then(data => (Array.isArray(data) ? data : []).map(b => ({ ...b, _category: cat })))
         .catch(() => [])
     )).then(results => setBins(results.flat()));
   }, [categoryList]);
@@ -396,9 +400,29 @@ export default function BinList({ category, allCategories, categoryList, parentN
                     <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3, paddingRight: 36, color: 'var(--text)' }}>
                       {bin.name}
                     </div>
-                    <div style={{ color: 'var(--text-faint)', fontSize: 10, marginBottom: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.5px' }}>
+                    <div style={{ color: 'var(--text-faint)', fontSize: 10, marginBottom: bin._category ? 4 : 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.5px' }}>
                       {bin.barcode}
                     </div>
+                    {bin._category && (
+                      <div style={{
+                        display: 'inline-block',
+                        marginBottom: 8,
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        border: '1px solid var(--line)',
+                        color: 'var(--text-dim)',
+                        fontSize: 9,
+                        fontFamily: 'var(--font-mono)',
+                        letterSpacing: '0.5px',
+                        textTransform: 'uppercase',
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {bin._category}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {requested.has(bin.barcode) ? (
                         <>
