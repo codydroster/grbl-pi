@@ -195,7 +195,7 @@ const S = {
 };
 
 const Sidebar = forwardRef(function Sidebar(
-  { categories, selectedCategory, selectedParent, onSelect, onSelectParent, reloadCategories, selectedSubcategory, setSelectedSubcategory },
+  { categories, selectedCategory, selectedParent, onSelect, onSelectSubcategory, onSelectParent, reloadCategories, selectedSubcategory, setSelectedSubcategory },
   ref
 ) {
   const [showAddModal, setShowAddModal] = useState(false);
@@ -345,7 +345,7 @@ const Sidebar = forwardRef(function Sidebar(
       setBinsMap(b => ({
         ...b,
         [cat]: (b[cat] || []).map(bin =>
-          (bin.subcategory || 'Uncategorized') === subcat
+          (bin.subcategory?.trim() || 'Uncategorized') === subcat
             ? { ...bin, subcategory: editName.trim() }
             : bin
         ),
@@ -472,7 +472,7 @@ const Sidebar = forwardRef(function Sidebar(
         {!topLevel && isExpanded && binsMap[cat] && (
           <div style={S.subcatSection}>
             {binsMap[cat].length === 0 && <div style={S.emptyMsg}>No bins</div>}
-            {[...new Set(binsMap[cat].map(bin => bin.subcategory || 'Uncategorized'))].map(subcat => {
+            {[...new Set(binsMap[cat].map(bin => bin.subcategory?.trim() || 'Uncategorized'))].map(subcat => {
               const isSubSelected = selectedSubcategory?.cat === cat && selectedSubcategory?.subcat === subcat;
               const isSubExpanded = expandedSubcats[cat]?.has(subcat);
               return (
@@ -487,7 +487,7 @@ const Sidebar = forwardRef(function Sidebar(
                     </button>
                     <button
                       style={S.subcatLabel(isSubSelected)}
-                      onClick={() => { setSelectedSubcategory({ subcat, cat }); onSelect(cat); }}
+                      onClick={() => onSelectSubcategory(cat, subcat)}
                     >
                       {subcat}
                     </button>
@@ -496,12 +496,12 @@ const Sidebar = forwardRef(function Sidebar(
                     </button>
                   </div>
                   {isSubExpanded && binsMap[cat]
-                    .filter(bin => (bin.subcategory || 'Uncategorized') === subcat)
+                    .filter(bin => (bin.subcategory?.trim() || 'Uncategorized') === subcat)
                     .map(bin => (
                       <div
                         key={bin.barcode}
                         style={S.binItem}
-                        onClick={() => { setSelectedSubcategory({ subcat, cat }); onSelect(cat); }}
+                        onClick={() => onSelectSubcategory(cat, subcat)}
                       >
                         {bin.name}
                       </div>

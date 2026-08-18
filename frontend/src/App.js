@@ -59,6 +59,16 @@ function App() {
     setSelectedSubcategory(null);
   };
 
+  // Picking a subcategory sets BOTH pieces of state in one place. Doing it as
+  // setSelectedSubcategory(x) followed by handleSelectCategory(cat) does not
+  // work - that handler clears the subcategory, so the later write won and the
+  // filter was wiped the instant it was set.
+  const handleSelectSubcategory = (cat, subcat) => {
+    setSelectedCategory(cat);
+    setSelectedParent(null);
+    setSelectedSubcategory({ cat, subcat });
+  };
+
   const handleSelectParent = (parentName, parentCategories) => {
     setSelectedParent({ name: parentName, categories: parentCategories });
     setSelectedCategory(null);
@@ -90,6 +100,7 @@ function App() {
                 selectedCategory={selectedCategory}
                 selectedParent={selectedParent?.name}
                 onSelect={handleSelectCategory}
+                onSelectSubcategory={handleSelectSubcategory}
                 onSelectParent={handleSelectParent}
                 reloadCategories={loadCategories}
                 selectedSubcategory={selectedSubcategory}
