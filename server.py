@@ -26,7 +26,24 @@ WEB = ROOT / "web"            # React build output (npm run build, copied here)
 BINS_DIR = ROOT / "data" / "bins"
 PARENTS_FILE = ROOT / "data" / "parents.json"
 
-NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+# A category name becomes a FILENAME, so this is a strict whitelist, not a
+# blacklist. Letters, digits, spaces, underscore and hyphen; it must start with
+# a letter or digit. No dot is allowed, so ".." can never form and there is no
+# path traversal to defend against; no slash or backslash for the same reason.
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]*$")
+
+
+def clean_name(value):
+    """Trimmed category name if it is acceptable, else None.
+
+    Surrounding whitespace is trimmed rather than rejected - "M5 Bolts " and
+    "M5 Bolts" are the same folder to anyone typing it, and a filename with a
+    trailing space is its own kind of misery.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if NAME_RE.match(value) else None
 
 
 # ---------- inventory files (same layout the node backend used) ----------
@@ -244,7 +261,8 @@ async def get_parents(request):
 async def post_parents(request):
     body = await request.json()
     category, parent = body.get("category"), body.get("parent")
-    if not (isinstance(category, str) and NAME_RE.match(category)):
+    category = clean_name(category)
+    if category is None:
         return bad("Invalid category name")
     parents = read_json(PARENTS_FILE, {})
     if parent:
@@ -261,7 +279,8 @@ async def get_categories(request):
 
 async def post_categories(request):
     name = (await request.json()).get("name")
-    if not (isinstance(name, str) and NAME_RE.match(name)):
+    name = clean_name(name)
+    if name is None:
         return bad("Invalid category name")
     f = BINS_DIR / (name + ".json")
     if f.exists():
@@ -271,15 +290,15 @@ async def post_categories(request):
 
 
 async def get_category(request):
-    name = request.match_info["name"]
-    if not NAME_RE.match(name):
+    name = clean_name(request.match_info["name"])
+    if name is None:
         return bad("Invalid category name")
     return web.json_response(read_json(BINS_DIR / (name + ".json"), []))
 
 
 async def post_bin(request):
-    name = request.match_info["name"]
-    if not NAME_RE.match(name):
+    name = clean_name(request.match_info["name"])
+    if name is None:
         return bad("Invalid category name")
     f = BINS_DIR / (name + ".json")
     new_bin = await request.json()
@@ -292,21 +311,22 @@ async def post_bin(request):
 
 
 async def put_category(request):
-    name = request.match_info["name"]
-    if not NAME_RE.match(name):
+    name = clean_name(request.match_info["name"])
+    if name is None:
         return bad("Invalid category name")
     write_json(BINS_DIR / (name + ".json"), await request.json())
     return web.json_response({"success": True})
 
 
 async def patch_category(request):
-    name = request.match_info["name"]
-    if not NAME_RE.match(name):
+    name = clean_name(request.match_info["name"])
+    if name is None:
         return bad("Invalid category name")
     body = await request.json()
     new_name, parent = body.get("newName"), body.get("parent")
     if new_name is not None:
-        if not (isinstance(new_name, str) and NAME_RE.match(new_name)):
+        new_name = clean_name(new_name)
+        if new_name is None:
             return bad("Invalid new name")
         new_path = BINS_DIR / (new_name + ".json")
         if new_path.exists():
@@ -328,8 +348,8 @@ async def patch_category(request):
 
 
 async def delete_category(request):
-    name = request.match_info["name"]
-    if not NAME_RE.match(name):
+    name = clean_name(request.match_info["name"])
+    if name is None:
         return bad("Invalid category name")
     f = BINS_DIR / (name + ".json")
     if not f.exists():
@@ -348,8 +368,8 @@ async def delete_category(request):
 
 
 async def patch_subcategory(request):
-    name = request.match_info["name"]
-    if not NAME_RE.match(name):
+    name = clean_name(request.match_info["name"])
+    if name is None:
         return bad("Invalid category name")
     body = await request.json()
     frm, to = body.get("from"), body.get("to")

@@ -224,7 +224,7 @@ const Sidebar = forwardRef(function Sidebar(
     refreshExpandedBins: async () => {
       const results = await Promise.all(
         [...expandedCategories].map(cat =>
-          fetch(`${BASE_URL}/category/${cat}`)
+          fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}`)
             .then(res => res.ok ? res.json().then(bins => [cat, bins]) : null)
             .catch(() => null)
         )
@@ -270,7 +270,7 @@ const Sidebar = forwardRef(function Sidebar(
     if (nameChanged) body.newName = editName.trim();
     if (parentChanged) body.parent = editParent.trim();
 
-    const res = await fetch(`${BASE_URL}/category/${cat}`, {
+    const res = await fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -290,12 +290,12 @@ const Sidebar = forwardRef(function Sidebar(
     // ask once plainly, then again if it still holds bins - the server refuses
     // a non-empty delete unless force=1, so nothing is lost by accident
     if (!window.confirm(`Delete category "${cat}"?`)) return;
-    let res = await fetch(`${BASE_URL}/category/${cat}`, { method: 'DELETE' });
+    let res = await fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}`, { method: 'DELETE' });
     if (res.status === 409) {
       const { bins } = await res.json();
       if (!window.confirm(
         `"${cat}" still holds ${bins} bin record(s). Delete anyway?`)) return;
-      res = await fetch(`${BASE_URL}/category/${cat}?force=1`, { method: 'DELETE' });
+      res = await fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}?force=1`, { method: 'DELETE' });
     }
     if (!res.ok) {
       window.alert(`Could not delete "${cat}"`);
@@ -312,7 +312,7 @@ const Sidebar = forwardRef(function Sidebar(
     const { cat, subcat } = editModal;
     if (editName.trim() === subcat) { setEditModal(null); return; }
 
-    const res = await fetch(`${BASE_URL}/category/${cat}/subcategory`, {
+    const res = await fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}/subcategory`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ from: subcat, to: editName.trim() }),
@@ -353,7 +353,7 @@ const Sidebar = forwardRef(function Sidebar(
         next.delete(cat);
       } else {
         next.add(cat);
-        fetch(`${BASE_URL}/category/${cat}`).then(res => res.ok && res.json().then(bins =>
+        fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}`).then(res => res.ok && res.json().then(bins =>
           setBinsMap(b => ({ ...b, [cat]: bins }))
         ));
       }

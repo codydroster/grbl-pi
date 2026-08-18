@@ -40,7 +40,7 @@ function groupBins(bins) {
 }
 
 async function putCategory(category, bins) {
-  return fetch(`${BASE_URL}/category/${category}`, {
+  return fetch(`${BASE_URL}/category/${encodeURIComponent(category)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bins),
@@ -85,7 +85,7 @@ export default function BinList({ category, categoryList, parentName, selectedSu
   const reloadRef = useRef(null);
   useEffect(() => {
     if (!category) { reloadRef.current = null; return; }
-    const load = () => fetch(`${BASE_URL}/category/${category}`)
+    const load = () => fetch(`${BASE_URL}/category/${encodeURIComponent(category)}`)
       .then(res => res.json())
       .then(data => setBins(Array.isArray(data) ? data : []))
       .catch(() => setBins([]));
@@ -97,7 +97,7 @@ export default function BinList({ category, categoryList, parentName, selectedSu
   useEffect(() => {
     if (!categoryList?.length) return;
     Promise.all(categoryList.map(cat =>
-      fetch(`${BASE_URL}/category/${cat}`)
+      fetch(`${BASE_URL}/category/${encodeURIComponent(cat)}`)
         .then(res => res.json())
         .then(data => (Array.isArray(data) ? data : []))
         .catch(() => [])
@@ -183,7 +183,7 @@ export default function BinList({ category, categoryList, parentName, selectedSu
       updatedBins[editIndex] = newBin;
       res = await putCategory(category, updatedBins);
     } else {
-      res = await fetch(`${BASE_URL}/category/${category}`, {
+      res = await fetch(`${BASE_URL}/category/${encodeURIComponent(category)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newBin),
@@ -195,7 +195,7 @@ export default function BinList({ category, categoryList, parentName, selectedSu
     }
     // Re-read from the server instead of patching local state, so what is on
     // screen is what actually persisted - no silent divergence until a refresh.
-    const saved = await fetch(`${BASE_URL}/category/${category}`)
+    const saved = await fetch(`${BASE_URL}/category/${encodeURIComponent(category)}`)
       .then(r => r.json()).catch(() => null);
     setBins(Array.isArray(saved) ? saved : bins);
     setShowForm(false);
