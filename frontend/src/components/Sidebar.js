@@ -529,6 +529,10 @@ const Sidebar = forwardRef(function Sidebar(
         </button>
       </div>
 
+      {/* The two pinned rows are views, not folders - a gap separates them from
+          the parent groups below rather than letting the whole lot read as one
+          undifferentiated list. */}
+      <div style={{ marginBottom: 14 }}>
       {categories.length > 0 && (
         <div style={{
           ...S.catRow,
@@ -552,6 +556,7 @@ const Sidebar = forwardRef(function Sidebar(
       )}
 
       {categories.includes(UNCATEGORIZED) && renderCategory(UNCATEGORIZED, true)}
+      </div>
 
       {sortedParents.map(parentName => {
         const isParentSelected = selectedParent === parentName;
