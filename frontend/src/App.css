@@ -39,10 +39,6 @@
   line-height: 1;
 }
 
-.app-topbar h1 span {
-  color: var(--accent);
-}
-
 .app-topbar .tagline {
   font-family: var(--font-mono);
   font-size: 10px;

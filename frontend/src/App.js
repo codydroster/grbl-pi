@@ -73,7 +73,7 @@ function App() {
   return (
     <div className="app-shell">
       <div className="app-topbar">
-        <h1>BIN <span>ROSTER</span></h1>
+        <h1>BIN</h1>
         <span className="tagline">Automated Storage // 4×8×3</span>
         <nav className="app-nav">
           <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Bins</NavLink>
