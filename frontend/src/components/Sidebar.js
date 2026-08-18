@@ -10,6 +10,11 @@ const DEFAULT_PARENT = 'General';
 // default target of the Add Bin form, so it wants to be the first thing seen -
 // not buried inside whichever parent it would otherwise sort into.
 const UNCATEGORIZED = 'uncategorized';
+// A pseudo parent group covering every category. It goes through the same path
+// a real parent group does - merge them all, then head each one - so "all bins"
+// needs no rendering of its own, and stays consistent with what a group looks
+// like. The name is what shows as the panel heading.
+const ALL_BINS = 'All bins';
 
 const S = {
   sidebar: {
@@ -523,6 +528,28 @@ const Sidebar = forwardRef(function Sidebar(
           <Icon path={mdiPlus} size={0.8} color="var(--accent)" />
         </button>
       </div>
+
+      {categories.length > 0 && (
+        <div style={{
+          ...S.catRow,
+          paddingLeft: 30,
+          ...(selectedParent === ALL_BINS ? S.catRowActive : {}),
+        }}>
+          <button
+            style={{
+              ...S.catLabel(selectedParent === ALL_BINS),
+              fontFamily: 'var(--font-display)',
+              fontWeight: 700,
+              fontSize: 14,
+              textTransform: 'uppercase',
+              letterSpacing: '1px',
+            }}
+            onClick={() => onSelectParent?.(ALL_BINS, categories)}
+          >
+            {ALL_BINS}
+          </button>
+        </div>
+      )}
 
       {categories.includes(UNCATEGORIZED) && renderCategory(UNCATEGORIZED, true)}
 
