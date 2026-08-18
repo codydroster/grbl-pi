@@ -248,6 +248,14 @@ const Sidebar = forwardRef(function Sidebar(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newCategory }),
     });
+    // Say why it failed. This used to fall through silently: a rejected name
+    // left the modal sitting there with no message, which looks like a dead
+    // button rather than "the server did not like that name".
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({}));
+      window.alert(error || `Could not create "${newCategory}".`);
+      return;
+    }
     if (res.ok) {
       if (newParent.trim()) {
         await fetch(`${BASE_URL}/parents`, {
@@ -280,6 +288,11 @@ const Sidebar = forwardRef(function Sidebar(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (!res.ok) {                       // same silent-failure trap as addCategory
+      const { error } = await res.json().catch(() => ({}));
+      window.alert(error || 'Could not save the category.');
+      return;
+    }
     if (res.ok) {
       const { name: finalName } = await res.json();
       if (nameChanged && selectedCategory === cat) onSelect(finalName);
