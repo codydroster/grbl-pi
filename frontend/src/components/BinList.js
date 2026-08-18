@@ -76,7 +76,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
   // exists, not that the machine is holding it - only a store mission that
   // actually scans and shelves it can say that, and do_store flips it to 'in'
   // when it finishes. Defaulting to 'in' claimed stock the rack did not have.
-  const [newBin, setNewBin] = useState({ name: '', barcode: '', status: 'out', subcategory: '', request: 'no' });
+  const [newBin, setNewBin] = useState({ name: '', barcode: '', status: 'out', subcategory: '' });
   // Barcodes with a retrieve request sent but not yet acknowledged by the vehicle
   const [requested, setRequested] = useState(new Set());
   const requestTimers = useRef({});
@@ -198,7 +198,10 @@ export default function BinList({ category, allCategories, categoryList, parentN
       });
     }
     if (!res?.ok) {
-      window.alert('Could not save the bin - it was not written to disk.');
+      // Show what the server objected to - a duplicate barcode names the bin
+      // and the category it clashes with, which a generic message would hide.
+      const { error } = await res.json().catch(() => ({}));
+      window.alert(error || 'Could not save the bin - it was not written to disk.');
       return;
     }
     // Re-read from the server instead of patching local state, so what is on
@@ -211,7 +214,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
     }
     setShowForm(false);
     setEditIndex(null);
-    setNewBin({ name: '', barcode: '', status: 'out', subcategory: '', request: 'no' });
+    setNewBin({ name: '', barcode: '', status: 'out', subcategory: '' });
     onBinsChanged?.();
   };
 

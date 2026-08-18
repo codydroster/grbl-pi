@@ -60,6 +60,25 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2))
 
 
+def barcode_index(skip=None):
+    """barcode -> category holding it, across every category file.
+
+    The barcode is the bin's identity: slots.json maps it to a physical slot,
+    status broadcasts key on it, and a retrieve looks a bin up by it. Two
+    records sharing one barcode makes all three ambiguous, so writes are
+    checked against this. `skip` leaves out the file being rewritten.
+    """
+    idx = {}
+    for f in BINS_DIR.glob("*.json"):
+        if skip is not None and f == skip:
+            continue
+        for b in read_json(f, []):
+            code = b.get("barcode")
+            if code and code not in idx:
+                idx[code] = f.stem
+    return idx
+
+
 def set_bin_status(barcode, status):
     # persist a status change wherever that barcode lives
     for f in BINS_DIR.glob("*.json"):
@@ -312,8 +331,13 @@ async def post_bin(request):
         return bad("Invalid category name")
     f = BINS_DIR / (name + ".json")
     new_bin = await request.json()
-    new_bin.setdefault("request", "no")
-    new_bin.setdefault("store", "no")
+    code = str(new_bin.get("barcode") or "").strip()
+    if not code:
+        return bad("A bin needs a barcode")
+    owner = barcode_index().get(code)
+    if owner:
+        return bad('Barcode "%s" is already on a bin in "%s"' % (code, owner), 409)
+    new_bin["barcode"] = code
     bins = read_json(f, [])
     bins.append(new_bin)
     write_json(f, bins)
@@ -324,7 +348,27 @@ async def put_category(request):
     name = clean_name(request.match_info["name"])
     if name is None:
         return bad("Invalid category name")
-    write_json(BINS_DIR / (name + ".json"), await request.json())
+    bins = await request.json()
+    if not isinstance(bins, list):
+        return bad("Expected a list of bins")
+    f = BINS_DIR / (name + ".json")
+    # This rewrites the file wholesale, so it is where an edit could introduce
+    # a clash - with another bin in the same category, or one in another.
+    seen = set()
+    for b in bins:
+        code = str(b.get("barcode") or "").strip()
+        if not code:
+            return bad("A bin needs a barcode")
+        if code in seen:
+            return bad('Barcode "%s" is on two bins in "%s"' % (code, name), 409)
+        seen.add(code)
+        b["barcode"] = code
+    elsewhere = barcode_index(skip=f)
+    for code in seen:
+        if code in elsewhere:
+            return bad('Barcode "%s" is already on a bin in "%s"'
+                       % (code, elsewhere[code]), 409)
+    write_json(f, bins)
     return web.json_response({"success": True})
 
 

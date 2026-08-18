@@ -56,8 +56,6 @@ def ensure(barcode):
     bins.append({"name": barcode,      # no friendly name yet - rename in the UI
                  "barcode": barcode,
                  "subcategory": "",    # blank groups it under "Uncategorized"
-                 "status": "in",
-                 "request": "no",
-                 "store": "no"})
+                 "status": "in"})
     f.write_text(json.dumps(bins, indent=2))
     return UNCATEGORIZED
