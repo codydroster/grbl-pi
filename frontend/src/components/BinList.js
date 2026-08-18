@@ -152,9 +152,16 @@ export default function BinList({ category, allCategories, categoryList, parentN
     };
   }, []);
 
-  const handleBinClick = (barcode) => {
-    if (requested.has(barcode)) return; // already awaiting acknowledgement
-    if (!window.confirm('Retrieve bin?')) return;
+  // Only a bin the rack is actually holding can be fetched. 'out' means it is
+  // already off the machine, and the two -pending states mean a sequence is
+  // mid-flight - asking for any of them would send the car after a slot that
+  // is empty or about to change.
+  const canRetrieve = (bin) => bin.status === 'in' && !requested.has(bin.barcode);
+
+  const handleBinClick = (bin) => {
+    if (!canRetrieve(bin)) return;
+    const barcode = bin.barcode;
+    if (!window.confirm(`Retrieve "${bin.name}"?`)) return;
     const ws = clientRef.current;
     if (ws?.readyState === WebSocket.OPEN) {
       const msg = JSON.stringify({ topic: 'bins/command', payload: { barcode, type: 'retrieve' } });
@@ -291,7 +298,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
                 <div
                   key={bin.barcode}
                   className={requested.has(bin.barcode) ? 'bin-requested' : getBinAnimationClass(bin)}
-                  onClick={() => handleBinClick(bin.barcode)}
+                  onClick={() => handleBinClick(bin)}
                   style={{
                     width: 152,
                     padding: '10px 12px 9px',
@@ -307,7 +314,7 @@ export default function BinList({ category, allCategories, categoryList, parentN
                     boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
                     position: 'relative',
                     userSelect: 'none',
-                    cursor: 'pointer',
+                    cursor: canRetrieve(bin) ? 'pointer' : 'default',
                   }}
                 >
                   <div style={{ position: 'absolute', top: 5, right: 4, display: 'flex' }}>
