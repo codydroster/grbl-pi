@@ -95,7 +95,29 @@ def jog(cnc, axis, dist, feed=1000):
     wait_idle(cnc)
 
 
+def send_goto(cnc, x, y):
+    # Start a rapid and return immediately. Used when two carriages have to run
+    # at once; anything else should use goto(), which waits.
+    cnc.write(("G90 G0 X%.3f Y%.3f\n" % (x, y)).encode())
+
+
+def state(cnc, timeout=1.0):
+    # Current state word from a status report - Idle / Run / Alarm / Jog / Hold.
+    # None if it never answered. Unlike wait_idle this returns straight away, so
+    # a move can be checked for rejection without waiting for it to finish.
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        cnc.reset_input_buffer()
+        cnc.write(b"?")
+        line = cnc.readline().decode(errors="replace").strip()
+        m = re.match(r"<([A-Za-z]+)", line)
+        if m:
+            return m.group(1)
+        time.sleep(0.05)
+    return None
+
+
 def goto(cnc, x, y):
     # rapid straight to a known position (from positions.json)
-    cnc.write(("G90 G0 X%.3f Y%.3f\n" % (x, y)).encode())
+    send_goto(cnc, x, y)
     wait_idle(cnc)

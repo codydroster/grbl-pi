@@ -102,19 +102,23 @@ Sequences (t l g 1 2 3 R) stream progress lines and end in DONE or FAIL.
 Depth moves print "d <mm>" while running in, then "c <mm>" while creeping."""
 
 
-def clear_path(carriages, active, our_ref, target_ref):
-    # target_ref is our destination in the shared (carriage 1) frame. If the other
-    # carriage is closer than MIN_SEPARATION to it, push it that far clear first,
-    # staying on the side it is already on (the carriages cannot pass each other).
+def clear_path(carriages, active, our_ref, target_ref, say=print):
+    """Where the other carriage has to be for us to run our_ref -> target_ref.
+
+    Returns None if it is already clear (or absent/unreadable), otherwise
+    (number, cnc, x, y, gap): where to send it, and gap - how far apart the two
+    are RIGHT NOW. Deciding the move and performing it are split so the caller
+    can start both carriages together; see goto_slot.
+    """
     other = 2 if active == 1 else 1
     oc = carriages.get(other)
     if not oc:
-        return
+        return None
     off_o = positions.load_offsets().get(str(other), [0, 0])
     here = grbl.position(oc["cnc"])
     if here is None:
-        print("cannot read carriage %d position - not moving it" % other)
-        return
+        say("cannot read carriage %d position - not moving it" % other)
+        return None
     o_ref = here[0] - off_o[0]                     # into the shared frame
 
     # Which side is it on? Decide relative to OUR CURRENT position, not the target -
@@ -126,15 +130,31 @@ def clear_path(carriages, active, our_ref, target_ref):
     limit = max(our_ref, target_ref) if side > 0 else min(our_ref, target_ref)
     safe = limit + MIN_SEPARATION * side
     if (o_ref - safe) * side >= 0:                 # already far enough on its side
-        return
-    print("carriage %d at %.0f blocks the run %.0f -> %.0f - moving it to %.0f"
-          % (other, o_ref, our_ref, target_ref, safe))
-    grbl.goto(oc["cnc"], safe + off_o[0], here[1])
+        return None
+    say("carriage %d at %.0f blocks the run %.0f -> %.0f - moving it to %.0f"
+        % (other, o_ref, our_ref, target_ref, safe))
+    return other, oc["cnc"], safe + off_o[0], here[1], abs(o_ref - our_ref)
 
 
-def goto_slot(carriages, n, col, row):
-    # drive carriage n to the saved position for col,row, clearing the other
-    # carriage out of the way first. False = missing position or unreadable GRBL.
+def goto_slot(carriages, n, col, row, say=print):
+    """Drive carriage n to the saved position for col,row, clearing the other
+    carriage out of the way. False = missing position or unreadable GRBL.
+
+    BOTH CARRIAGES RUN AT ONCE when it is safe to. They travel at the same
+    speed, and the blocker is only ever asked to move to MIN_SEPARATION beyond
+    where we are going - so in the direction that closes the gap its trip is
+    always the shorter of the two. The gap therefore shrinks monotonically from
+    whatever it is now to exactly MIN_SEPARATION, and never dips below.
+
+    That argument leans on two things, so both are checked rather than assumed:
+
+      * EQUAL SPEED. If the blocker is slower the gap undershoots - a quarter
+        slower closes it to 75mm on a long run. $110/$111 (max rate) and
+        $120/$121 (acceleration) must match on both boards.
+      * ALREADY AT LEAST MIN_SEPARATION APART. Starting closer than that (after
+        hand jogging, say) the blocker's trip is the longer one and the gap
+        keeps shrinking. That case falls back to clearing it first, in full.
+    """
     c = carriages[n]
     xy = positions.load().get(positions.key(col, row))
     if not xy:
@@ -143,8 +163,31 @@ def goto_slot(carriages, n, col, row):
     ours = grbl.position(c["cnc"])
     if ours is None:
         return False
-    clear_path(carriages, n, ours[0] - off[0], xy[0])
-    grbl.goto(c["cnc"], xy[0] + off[0], xy[1] + off[1])
+    x, y = xy[0] + off[0], xy[1] + off[1]
+
+    move = clear_path(carriages, n, ours[0] - off[0], xy[0], say)
+    if move is None:                               # nothing in the way
+        grbl.goto(c["cnc"], x, y)
+        return True
+
+    other, ocnc, ox, oy, gap = move
+    if gap < MIN_SEPARATION:
+        say("carriages are only %.0fmm apart - clearing carriage %d first"
+            % (gap, other))
+        grbl.goto(ocnc, ox, oy)                    # in full, before we add motion
+        grbl.goto(c["cnc"], x, y)
+        return True
+
+    # Start the blocker, then make sure it actually took the move before we
+    # commit to ours. A rejected one (soft limit, not homed) used to leave us
+    # standing still because clear_path blocked; now we would be rolling at it.
+    grbl.send_goto(ocnc, ox, oy)
+    if grbl.state(ocnc) == "Alarm":
+        raise RuntimeError("carriage %d rejected its clearing move - staying put"
+                           % other)
+    grbl.send_goto(c["cnc"], x, y)
+    grbl.wait_idle(ocnc)
+    grbl.wait_idle(c["cnc"])
     return True
 
 
@@ -202,7 +245,7 @@ def store_bin(carriages, active, say, target=None, on_status=None):
             on_status(code, value)
 
     say("carriage -> staging %d,%d" % STAGING)
-    if not goto_slot(carriages, active, *STAGING):
+    if not goto_slot(carriages, active, *STAGING, say=say):
         say("cannot reach staging %d,%d - taught? GRBL readable?" % STAGING)
         return False
 
@@ -236,7 +279,7 @@ def store_bin(carriages, active, say, target=None, on_status=None):
     col, row, depth = (int(v) for v in key.split(","))
 
     say("carriage -> %d,%d depth %d" % (col, row, depth))
-    if not goto_slot(carriages, active, col, row):
+    if not goto_slot(carriages, active, col, row, say=say):
         say("cannot reach %d,%d" % (col, row))
         status(code, "out")
         return False
@@ -269,7 +312,7 @@ def put_bin(carriages, active, say, seq, code, dest, old_key=None):
     """
     col, row, depth = (int(v) for v in dest.split(","))
     say("re-shelving %s at %s" % (code, dest))
-    if not goto_slot(carriages, active, col, row):
+    if not goto_slot(carriages, active, col, row, say=say):
         say("cannot reach %d,%d" % (col, row))
         return False
     if not seq(str(depth)):
@@ -323,7 +366,7 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
 
     for _ in range(depth):               # at most depth pickups: blockers, then it
         say("carriage -> %s" % lane)
-        if not goto_slot(carriages, active, col, row):
+        if not goto_slot(carriages, active, col, row, say=say):
             say("cannot reach %s" % lane)
             return False
 
@@ -353,7 +396,7 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
             # question is whether it reached the output lane.
             status(got, "out-pending")
             say("carriage -> output %d,%d" % OUTPUT)
-            if not goto_slot(carriages, active, *OUTPUT):
+            if not goto_slot(carriages, active, *OUTPUT, say=say):
                 say("bin is on the car, but cannot reach output %d,%d" % OUTPUT)
                 status(got, "out")
                 return False
@@ -417,7 +460,7 @@ def dispatch(carriages, active, line, say=print, on_status=None):
             if not positions.load().get(positions.key(col, row)):
                 say("no saved position for %s - teach it with 'save C R'"
                     % positions.key(col, row))
-            elif not goto_slot(carriages, active, col, row):
+            elif not goto_slot(carriages, active, col, row, say=say):
                 say("cannot read our position - not moving")
         elif cmd == "save":       # teach current position as slot C,R (for col 0)
             col, row = int(parts[1]), int(parts[2])
