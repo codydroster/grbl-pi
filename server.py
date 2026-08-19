@@ -7,6 +7,7 @@ data/bins/*.json. Serves the built frontend from web/.
 Run: python3 server.py     (then open http://<pi>:8000 from any device)
 """
 import asyncio
+from contextlib import AsyncExitStack
 import json
 import re
 import time
@@ -103,6 +104,31 @@ def crane_log(emit, line):
 
 # ---------- machine commands (serialized - one thing at a time) ----------
 
+def locks_for(app, scope, n):
+    """The locks a piece of work needs, in carriage order so two waiters cannot
+    deadlock on each other. 'both' is for anything that can move a carriage
+    along the shared rail; 'active' only ties up the one it is aimed at."""
+    if scope == "both":
+        return [app["locks"][k] for k in sorted(app["locks"])]
+    return [app["locks"][n]]
+
+
+async def run_locked(app, scope, n, busy, work):
+    """Run work() holding what scope needs, or call busy() and give up.
+
+    Nothing waits in a queue: a machine command that cannot start now is
+    reported rather than silently run later, when the situation has moved on.
+    """
+    needed = locks_for(app, scope, n)
+    if any(l.locked() for l in needed):
+        busy()
+        return None
+    async with AsyncExitStack() as stack:
+        for l in needed:
+            await stack.enter_async_context(l)
+        return await work()
+
+
 def pick_carriage(app):
     return next((n for n, c in app["carriages"].items() if c), None)
 
@@ -136,16 +162,17 @@ async def do_retrieve(app, barcode):
     if n is None:
         crane_log(emit, "no carriage connected")
         return
-    if app["lock"].locked():
-        crane_log(emit, "machine busy - retrieve %s ignored" % barcode)
-        return
-    async with app["lock"]:
-        # No optimistic status, same as do_store: the bin is only out-pending
-        # once its own label has been read off the forks. Asking for it is not
-        # evidence the machine found it - the lane can disagree with slots.json,
-        # which is exactly why every pickup is scanned.
-        await asyncio.get_event_loop().run_in_executor(
-            None, retrieve_blocking, app, emit, n, barcode)
+    # A retrieve drives the carriage through goto_slot, which can command the
+    # other one out of the way, so it needs both.
+    # No optimistic status, same as do_store: the bin is only out-pending once
+    # its own label has been read off the forks. Asking for it is not evidence
+    # the machine found it - the lane can disagree with slots.json, which is
+    # exactly why every pickup is scanned.
+    await run_locked(
+        app, "both", n,
+        lambda: crane_log(emit, "machine busy - retrieve %s ignored" % barcode),
+        lambda: asyncio.get_event_loop().run_in_executor(
+            None, retrieve_blocking, app, emit, n, barcode))
 
 
 async def do_store(app, barcode):
@@ -157,17 +184,16 @@ async def do_store(app, barcode):
     if n is None:
         crane_log(emit, "no carriage connected")
         return
-    if app["lock"].locked():
-        crane_log(emit, "machine busy - store ignored")
-        return
-    async with app["lock"]:
-        # NO OPTIMISTIC STATUS HERE. The page cannot know which bin is actually
-        # sitting at staging - only the scanner does. Marking the tapped card
-        # in-pending meant storing bin B while bin A claimed to be in stock.
-        # store_bin sets it against the code it reads and broadcasts through
-        # on_status, so the card that updates is the bin that moved.
-        await asyncio.get_event_loop().run_in_executor(
-            None, store_blocking, app, emit, n)
+    # NO OPTIMISTIC STATUS HERE. The page cannot know which bin is actually
+    # sitting at staging - only the scanner does. Marking the tapped card
+    # in-pending meant storing bin B while bin A claimed to be in stock.
+    # store_bin sets it against the code it reads and broadcasts through
+    # on_status, so the card that updates is the bin that moved.
+    await run_locked(
+        app, "both", n,
+        lambda: crane_log(emit, "machine busy - store ignored"),
+        lambda: asyncio.get_event_loop().run_in_executor(
+            None, store_blocking, app, emit, n))
 
 
 def cnc_blocking(app, n, command):
@@ -203,15 +229,23 @@ async def do_debug(app, command):
     if n is None:
         say("no carriage connected")
         return
-    if app["lock"].locked():
-        say("machine busy")
-        return
-    async with app["lock"]:
-        # Pass the broadcast hook: a 'store' typed here changes a bin's status,
-        # and every open page needs to hear about it, not just the disk.
-        app["debug_active"] = await asyncio.get_event_loop().run_in_executor(
+    # Pass the broadcast hook: a 'store' typed here changes a bin's status, and
+    # every open page needs to hear about it, not just the disk.
+    def run():
+        return asyncio.get_event_loop().run_in_executor(
             None, main.dispatch, app["carriages"], n, command, say,
             lambda code, status: emit({"barcode": code, "status": status}))
+
+    scope = main.command_scope(command)
+    if scope == "none":
+        # Switching the active carriage, printing positions - no hardware in
+        # sight. These used to answer "machine busy" during a long homing cycle,
+        # which is nonsense: there is nothing for them to be busy with.
+        app["debug_active"] = await run()
+        return
+    active = await run_locked(app, scope, n, lambda: say("machine busy"), run)
+    if active is not None:
+        app["debug_active"] = active
 
 
 async def do_console(app, topic, command):
@@ -220,11 +254,7 @@ async def do_console(app, topic, command):
     n = pick_carriage(app)
     if n is None or not command:
         return
-    if app["lock"].locked():
-        emit({"topic": topic.replace("command", "response"),
-              "payload": {"response": "machine busy"}})
-        return
-    async with app["lock"]:
+    async def work():
         loop = asyncio.get_event_loop()
         if "cnc" in topic:
             reply = await loop.run_in_executor(None, cnc_blocking, app, n, command)
@@ -233,6 +263,12 @@ async def do_console(app, topic, command):
             lines = await loop.run_in_executor(None, carpark_blocking, app, n, command)
             for l in lines:
                 crane_log(emit, l)
+
+    # Raw gcode can move a carriage with no clear_path check, so it takes both.
+    await run_locked(app, "both", n,
+                     lambda: emit({"topic": topic.replace("command", "response"),
+                                   "payload": {"response": "machine busy"}}),
+                     work)
 
 
 # ---------- websocket ----------
@@ -469,7 +505,10 @@ def build_app(carriages):
     app = web.Application()
     app["carriages"] = carriages
     app["clients"] = set()
-    app["lock"] = asyncio.Lock()
+    # One lock per carriage rather than one for the machine: two carriages that
+    # never touch the same hardware should not block each other. Work that can
+    # move a carriage along the shared rail takes both (see main.command_scope).
+    app["locks"] = {n: asyncio.Lock() for n in main.CARRIAGES}
     app["debug_active"] = None
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/parents", get_parents)

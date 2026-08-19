@@ -102,6 +102,36 @@ Sequences (t l g 1 2 3 R) stream progress lines and end in DONE or FAIL.
 Depth moves print "d <mm>" while running in, then "c <mm>" while creeping."""
 
 
+# What a debug command actually needs held, so the web layer stops serialising
+# things that never touch the same hardware.
+#   none   - no machine at all (switching the active carriage, reading files)
+#   active - only the carriage it is aimed at
+#   both   - can move a carriage ALONG THE SHARED RAIL, so nothing else may move
+#
+# $H is deliberately 'active': the two carriages home to OPPOSITE ends of the
+# rail, so homing only ever drives them apart and both can home at once.
+# Jogs and raw gcode are 'both' - unlike 'm' they get no clear_path check, so
+# they must not overlap with anything else that moves. Anything unrecognised
+# falls through to GRBL as raw gcode, so the default is the cautious one.
+_SCOPE_NONE = {"help", "c1", "c2", "positions", "offset", "slots", "quit"}
+_SCOPE_ACTIVE = {"save", "car", "u", "d", "ret", "gohome", "locate", "cur",
+                 "depth", "read", "place", "dist", "scan", "laser", "f", "r",
+                 "s", "pos", "home", "bin", "align", "sensor", "$H", "sleep",
+                 "wake"}
+
+
+def command_scope(line):
+    parts = line.split()
+    if not parts:
+        return "none"
+    cmd = parts[0]
+    if cmd in _SCOPE_NONE:
+        return "none"
+    if cmd in _SCOPE_ACTIVE:
+        return "active"
+    return "both"          # m/move/store/get, a jog, or raw gcode
+
+
 def clear_path(carriages, active, our_ref, target_ref, say=print):
     """Where the other carriage has to be for us to run our_ref -> target_ref.
 
