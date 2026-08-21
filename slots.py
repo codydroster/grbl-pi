@@ -29,6 +29,29 @@ def find(barcode):
     return None
 
 
+DEPTHS = (1, 2, 3)
+
+
+def deepest_open(lane, ignore=()):
+    """Deepest depth in `lane` a bin can actually be driven to right now.
+
+    Not simply the deepest empty slot: the car has to drive PAST everything
+    shallower, so a free depth 3 behind an occupied depth 1 is unreachable.
+    This walks out from the front and stops at the first bin in the way.
+
+    `ignore` lists depths whose recorded bin is not physically there - the one
+    on a carriage's forks mid-dig, which slots.json still has filed at its old
+    slot. None means even depth 1 is blocked.
+    """
+    taken = load()
+    best = None
+    for d in DEPTHS:
+        if d not in ignore and ("%s,%d" % (lane, d)) in taken:
+            break                    # this one blocks anything behind it
+        best = d
+    return best
+
+
 def next_free(lanes):
     # First empty slot, DEEPEST FIRST within each lane - the back has to fill
     # before the front or the front bin blocks the ones behind it.

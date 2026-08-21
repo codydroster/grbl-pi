@@ -544,11 +544,32 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
     finally:
         # However this ended, the helper must not be left holding anything.
         if held_depth is not None:
-            say("carriage %d putting its bin back at depth %d" % (helper, held_depth))
+            # Put it back as DEEP as it will now go, which after pulling a bin
+            # out from behind it is deeper than where it came from. That is not
+            # tidiness: next_free hands out the deepest empty slot, so a hole
+            # left at depth 2 under a bin still sitting at depth 1 would later
+            # send a car driving into that bin. Consolidating keeps a lane's
+            # occupancy contiguous from the back, which is the assumption
+            # deepest-first filling rests on.
+            back = slots.deepest_open(lane, ignore=(held_depth,)) or held_depth
+            if back != held_depth:
+                say("depth %d is clear now - carriage %d puts its bin back "
+                    "there instead of depth %d" % (back, helper, held_depth))
+            else:
+                say("carriage %d putting its bin back at depth %d" % (helper, back))
             if not (goto_slot(carriages, helper, col, row, say=say, separation=sep)
-                    and seq_h(str(held_depth)) and seq_h("d") and seq_h("g")):
+                    and seq_h(str(back)) and seq_h("d") and seq_h("g")):
                 say("CARRIAGE %d IS STILL HOLDING A BIN - it could not be put "
-                    "back at %s depth %d" % (helper, lane, held_depth))
+                    "back at %s depth %d" % (helper, lane, back))
+            elif back != held_depth:
+                # It really moved, so the record has to move with it.
+                store = slots.load()
+                held_key = slots.key(col, row, held_depth)
+                code = store.pop(held_key, None)
+                if code:
+                    store[slots.key(col, row, back)] = code
+                    slots.save(store)
+                    say("%s is now at %s" % (code, slots.key(col, row, back)))
 
 
 def _slot_agrees(say, status, to_output, col, row, picked_depth, got):
