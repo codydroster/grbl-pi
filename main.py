@@ -49,7 +49,9 @@ HELP = """commands:
   cur           spot current reading (mA) from carpark's INA219
   store [C R D] put the bin at staging (0,0) away - locate, lift, scan, shelve.
                 With no args it picks the next free slot, deepest first.
-  get BARCODE   fetch that stored bin and bring it back to staging
+  get BARCODE   fetch that stored bin and drop it at the output lane 0,1.
+                Depth 2+ needs carriage 2: it lifts the bin in front out and
+                holds it while carriage 1 takes the target, then puts it back
   slots         print barcode->slot assignments and the next free slot
   depth N       drive the car to taught depth N (1=closest, 2, 3=deepest).
                 Never scans - use 'read' for that
@@ -371,16 +373,37 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
     """Fetch a stored bin by barcode, digging out anything parked in front of it.
 
     The car enters a lane EMPTY, and the rangefinder ranges off the bin rather
-    than the car, so there is no distance reading on the way in - going in is
-    always sensor-driven (locate), which takes whichever bin is at the front.
-    Reaching a deeper bin therefore means pulling the ones ahead of it out first
-    and re-shelving them elsewhere. Every pickup is scanned, so a lane whose
-    real contents disagree with slots.json is caught rather than acted on.
+    than the car, so there is no reading on the way in - going in is always
+    sensor-driven (locate), which takes whichever bin is at the FRONT. Reaching
+    a deeper bin therefore means pulling the ones ahead of it out first.
 
-    STATUS FOLLOWS THE SCANNER, as in store_bin: the target is only marked
-    out-pending once its own label has come back off the forks, not when someone
-    asked for it. Blockers are left alone - they go straight back on a shelf, so
-    'in' never stops being true for them.
+    THE SECOND CARRIAGE IS A PAIR OF HANDS, not a second retriever. For a target
+    at depth D:
+
+        depths 1 .. D-2   the active carriage clears, re-shelving each one
+        depth  D-1        the helper lifts out and HOLDS, then puts it straight
+                          back when the target is clear
+        depth  D          the active carriage takes, and delivers to 0,1
+
+    which is why depth 1 needs no help at all, depth 2 is just "helper holds one
+    bin", and depth 3 is active, helper, active. Holding beats re-shelving
+    because the bin never leaves its slot on paper - nothing in slots.json moves
+    and it goes back where it came from. Only the earlier blockers, which have
+    to be put down somewhere for the forks to be free again, actually move.
+
+    They never share a lane: the column pitch is 115mm against a 140mm minimum
+    separation, so two carriages cannot even stand at neighbouring columns. Each
+    trip is take-turns, and goto_slot pushes the other one clear on its own.
+
+    THE HELPER HAS NO SCANNER, so what it lifts is taken on trust from
+    slots.json. Every bin the ACTIVE carriage picks is checked against its own
+    slot: not the target is fine on a deep dig, not what that slot says is not.
+    A slot that disagrees marks its recorded bin missing and sends whatever
+    really came out to 0,1, rather than re-filing by a record just shown wrong.
+
+    STATUS FOLLOWS THE SCANNER, as in store_bin: the target is only out-pending
+    once its own label has come back off the forks. Bins that go back on a shelf
+    are left alone - 'in' never stops being true for them.
     """
     if not carriages[active].get("column0", True):
         say("carriage %d cannot reach column 0 - get is carriage 1 only" % active)
@@ -393,17 +416,29 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
     lane = "%d,%d" % (col, row)
     uart = carriages[active]["uart"]
 
+    other = 2 if active == 1 else 1
+    helper = other if carriages.get(other) else None
+
     def seq(ch):                         # per-command timeout, see carpark.TIMEOUTS
         return carpark.run_sequence(uart, ch, report=lambda l: say("  " + l))
+
+    def seq_h(ch):                       # ...on the helper, tagged so the two
+        return carpark.run_sequence(     # machines are told apart in the log
+            carriages[helper]["uart"], ch,
+            report=lambda l: say("  c%d %s" % (helper, l)))
 
     def status(code, value):
         inventory.set_status(code, value)
         if on_status:
             on_status(code, value)
 
-    if depth > 1:
-        say("%s is at depth %d - bins in front of it come out first"
-            % (barcode, depth))
+    def lift_out(n, runner):
+        """Drive carriage n into the lane and come away with the front bin."""
+        say("carriage %d -> %s" % (n, lane))
+        if not goto_slot(carriages, n, col, row, say=say):
+            say("cannot reach %s" % lane)
+            return False
+        return runner("d") and runner("l") and runner("u")
 
     def to_output(code):
         """Carry whatever is on the forks out to 0,1 and set it down there.
@@ -417,38 +452,60 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
             say("bin is on the car, but cannot reach output %d,%d" % OUTPUT)
             status(code, "out")
             return False
-        say("feeling for the drop point")   # depth there is whatever a
-        if not seq("P"):                    # human has left behind
-            status(code, "out")
-            return False
-        say("lift down")                    # set it down where it stopped
-        if not seq("d"):
-            status(code, "out")
-            return False
-        say("car home")
-        if not seq("g"):
+        if not (seq("P") and seq("d") and seq("g")):
             status(code, "out")
             return False
         status(code, "out")
         return True
 
-    for picked_depth in range(1, depth + 1):   # front bin first, then deeper
-        say("carriage -> %s" % lane)
-        if not goto_slot(carriages, active, col, row, say=say):
-            say("cannot reach %s" % lane)
+    if depth > 1:
+        if helper is None:
+            say("%s is at depth %d and carriage %d is not connected - "
+                "nothing can hold the bin in front of it" % (barcode, depth, other))
             return False
+        say("%s is at depth %d - %d bin(s) in front of it come out first"
+            % (barcode, depth, depth - 1))
 
-        say("lift down")                 # forks low to slide under
-        if not seq("d"):
+    held_depth = None                    # depth the helper is holding a bin from
+    try:
+        # ---- blockers, front first ----
+        for d in range(1, depth):
+            if d == depth - 1:
+                # The last one only has to be out of the way for a moment, so
+                # the helper keeps it on the forks instead of shelving it.
+                say("carriage %d lifting out depth %d to hold" % (helper, d))
+                if not lift_out(helper, seq_h):
+                    return False
+                if not seq_h("g"):
+                    return False
+                held_depth = d
+                continue
+
+            # An earlier blocker has to be put down for good - the active
+            # carriage needs empty forks again to keep digging.
+            if not lift_out(active, seq):
+                return False
+            say("car home, reading the label on the way")
+            if not seq("R"):
+                return False
+            got = carpark.read_barcode(uart, fresh=False)
+            if got is None:
+                say("could not read the label - stopping with the bin on the car")
+                return False
+            say("picked up %s" % got)
+            if not _slot_agrees(say, status, to_output, col, row, d, got):
+                return False
+            dest = slots.next_free([l for l in rack_lanes() if l != lane])
+            if dest is None:
+                say("nowhere to put %s - rack is full" % got)
+                return False
+            if not put_bin(carriages, active, say, seq, got, dest, slots.find(got)):
+                return False
+
+        # ---- the target, now at the front ----
+        if not lift_out(active, seq):
             return False
-        say("locating front bin")        # car is empty: sensor, not distance
-        if not seq("l"):
-            say("no bin found in %s" % lane)
-            return False
-        say("lift up")
-        if not seq("u"):
-            return False
-        say("car home, reading the label on the way")   # 'R' = 'g' + scan
+        say("car home, reading the label on the way")
         if not seq("R"):
             return False
         got = carpark.read_barcode(uart, fresh=False)
@@ -456,55 +513,53 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
             say("could not read the label - stopping with the bin on the car")
             return False
         say("picked up %s" % got)
+        if not _slot_agrees(say, status, to_output, col, row, depth, got):
+            return False
 
         got_key = slots.find(got)
-
-        # EVERY PICK IS CHECKED AGAINST ITS OWN SLOT, not just against the bin
-        # that was asked for. Pulling the front bins out of the way is normal on
-        # a deep retrieve, so "not the target" is not an error - "not what the
-        # file says is in this slot" is. The bins come out front first, so this
-        # pass emptied depth `picked_depth`.
-        store = slots.load()
-        slot_key = slots.key(col, row, picked_depth)
-        expected = store.get(slot_key)
-        if got != expected:
-            say("%s should hold %s but the car brought out %s"
-                % (slot_key, expected or "nothing", got))
-            if expected:
-                # It is not where the record says, and the record was the only
-                # reason to think it was anywhere. Say so rather than guess.
-                status(expected, "missing")
-                say("%s marked missing" % expected)
-            store.pop(slot_key, None)          # that slot is empty now
-            if got_key:
-                store.pop(got_key, None)       # and wherever this one was filed
-            slots.save(store)
-            # It does not go back on a shelf: this lane's record has just been
-            # shown to be wrong, so re-filing by it would bury the problem.
-            say("sending %s to the output lane instead" % got)
-            to_output(got)
+        if not to_output(got):
             return False
+        store = slots.load()             # cleared only once it is really out
+        store.pop(got_key or key, None)
+        slots.save(store)
+        say("retrieved %s - dropped at output %d,%d" % ((barcode,) + OUTPUT))
+        return True
+    finally:
+        # However this ended, the helper must not be left holding anything.
+        if held_depth is not None:
+            say("carriage %d putting its bin back at depth %d" % (helper, held_depth))
+            if not (goto_slot(carriages, helper, col, row, say=say)
+                    and seq_h(str(held_depth)) and seq_h("d") and seq_h("g")):
+                say("CARRIAGE %d IS STILL HOLDING A BIN - it could not be put "
+                    "back at %s depth %d" % (helper, lane, held_depth))
 
-        if got == barcode:
-            if not to_output(got):
-                return False
-            store = slots.load()         # cleared only once it is really out
-            store.pop(got_key or key, None)
-            slots.save(store)
-            say("retrieved %s - dropped at output %d,%d" % ((barcode,) + OUTPUT))
-            return True
 
-        # a blocker, and it is the one the file expected: put it anywhere but
-        # this lane, then come back for the target
-        dest = slots.next_free([l for l in rack_lanes() if l != lane])
-        if dest is None:
-            say("nowhere to put %s - rack is full" % got)
-            return False
-        if not put_bin(carriages, active, say, seq, got, dest, got_key):
-            return False
+def _slot_agrees(say, status, to_output, col, row, picked_depth, got):
+    """True if `got` is what slots.json says is at that exact slot.
 
-    say("emptied %d bins from %s without finding %s - slots.json is out of sync"
-        % (depth, lane, barcode))
+    Not the target is fine - pulling the front bins out of the way is normal on
+    a deep dig. Not what THIS slot says is not: the record was the only reason
+    to believe the recorded bin was anywhere, so it is marked missing, and
+    whatever really came out goes to 0,1 rather than back on a shelf, since
+    re-filing by a record just shown wrong would bury the problem.
+    """
+    store = slots.load()
+    slot_key = slots.key(col, row, picked_depth)
+    expected = store.get(slot_key)
+    if got == expected:
+        return True
+    say("%s should hold %s but the car brought out %s"
+        % (slot_key, expected or "nothing", got))
+    if expected:
+        status(expected, "missing")
+        say("%s marked missing" % expected)
+    store.pop(slot_key, None)            # that slot is empty now
+    got_key = slots.find(got)
+    if got_key:
+        store.pop(got_key, None)         # and wherever this one was filed
+    slots.save(store)
+    say("sending %s to the output lane instead" % got)
+    to_output(got)
     return False
 
 
