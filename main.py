@@ -405,7 +405,34 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
         say("%s is at depth %d - bins in front of it come out first"
             % (barcode, depth))
 
-    for _ in range(depth):               # at most depth pickups: blockers, then it
+    def to_output(code):
+        """Carry whatever is on the forks out to 0,1 and set it down there.
+
+        Every exit leaves the bin out of the rack - it is on the car either way -
+        so the only question is whether it reached the lane.
+        """
+        status(code, "out-pending")
+        say("carriage -> output %d,%d" % OUTPUT)
+        if not goto_slot(carriages, active, *OUTPUT, say=say):
+            say("bin is on the car, but cannot reach output %d,%d" % OUTPUT)
+            status(code, "out")
+            return False
+        say("feeling for the drop point")   # depth there is whatever a
+        if not seq("P"):                    # human has left behind
+            status(code, "out")
+            return False
+        say("lift down")                    # set it down where it stopped
+        if not seq("d"):
+            status(code, "out")
+            return False
+        say("car home")
+        if not seq("g"):
+            status(code, "out")
+            return False
+        status(code, "out")
+        return True
+
+    for picked_depth in range(1, depth + 1):   # front bin first, then deeper
         say("carriage -> %s" % lane)
         if not goto_slot(carriages, active, col, row, say=say):
             say("cannot reach %s" % lane)
@@ -431,36 +458,44 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
         say("picked up %s" % got)
 
         got_key = slots.find(got)
+
+        # EVERY PICK IS CHECKED AGAINST ITS OWN SLOT, not just against the bin
+        # that was asked for. Pulling the front bins out of the way is normal on
+        # a deep retrieve, so "not the target" is not an error - "not what the
+        # file says is in this slot" is. The bins come out front first, so this
+        # pass emptied depth `picked_depth`.
+        store = slots.load()
+        slot_key = slots.key(col, row, picked_depth)
+        expected = store.get(slot_key)
+        if got != expected:
+            say("%s should hold %s but the car brought out %s"
+                % (slot_key, expected or "nothing", got))
+            if expected:
+                # It is not where the record says, and the record was the only
+                # reason to think it was anywhere. Say so rather than guess.
+                status(expected, "missing")
+                say("%s marked missing" % expected)
+            store.pop(slot_key, None)          # that slot is empty now
+            if got_key:
+                store.pop(got_key, None)       # and wherever this one was filed
+            slots.save(store)
+            # It does not go back on a shelf: this lane's record has just been
+            # shown to be wrong, so re-filing by it would bury the problem.
+            say("sending %s to the output lane instead" % got)
+            to_output(got)
+            return False
+
         if got == barcode:
-            # Confirmed by its own label, and already off the shelf on the forks.
-            # Every exit from here leaves it out of the rack, so the only
-            # question is whether it reached the output lane.
-            status(got, "out-pending")
-            say("carriage -> output %d,%d" % OUTPUT)
-            if not goto_slot(carriages, active, *OUTPUT, say=say):
-                say("bin is on the car, but cannot reach output %d,%d" % OUTPUT)
-                status(got, "out")
-                return False
-            say("feeling for the drop point")   # depth there is whatever a
-            if not seq("P"):                    # human has left behind
-                status(got, "out")
-                return False
-            say("lift down")                    # set it down where it stopped
-            if not seq("d"):
-                status(got, "out")
-                return False
-            say("car home")
-            if not seq("g"):
-                status(got, "out")
+            if not to_output(got):
                 return False
             store = slots.load()         # cleared only once it is really out
             store.pop(got_key or key, None)
             slots.save(store)
-            status(got, "out")
             say("retrieved %s - dropped at output %d,%d" % ((barcode,) + OUTPUT))
             return True
 
-        # a blocker: put it anywhere but this lane, then come back for the target
+        # a blocker, and it is the one the file expected: put it anywhere but
+        # this lane, then come back for the target
         dest = slots.next_free([l for l in rack_lanes() if l != lane])
         if dest is None:
             say("nowhere to put %s - rack is full" % got)

@@ -12,6 +12,7 @@ import { BASE_URL, WS_URL } from '../config';
 // border, which meant the most common card carried no colour at all and the
 // grid read as a wall of white against a grey page.
 function getBinBorderColor(bin) {
+  if (bin.status === 'missing') return 'var(--amber)';
   if (bin.status === 'out' || bin.status === 'out-pending') return 'var(--red)';
   return 'var(--green)';
 }
@@ -19,11 +20,15 @@ function getBinBorderColor(bin) {
 // Faint wash of the same colour across the card face, so status is legible
 // from across the room rather than only at the border.
 function getBinTint(bin) {
+  if (bin.status === 'missing') return 'var(--amber-soft)';
   if (bin.status === 'out' || bin.status === 'out-pending') return 'var(--red-soft)';
   return 'var(--green-soft)';
 }
 
 function getBinStatus(bin) {
+  // Set when a slot turned out to hold something else. The rack's record said
+  // this bin was there and it was not, so nothing knows where it is.
+  if (bin.status === 'missing') return { label: 'MISSING', led: 'led-amber', color: 'var(--amber)' };
   if (bin.status === 'in') return { label: 'IN STOCK', led: 'led-green', color: 'var(--green)' };
   if (bin.status === 'out') return { label: 'OUT', led: 'led-red', color: 'var(--red)' };
   if (bin.status === 'in-pending') return { label: 'STORING…', led: 'led-green', color: 'var(--green)' };

@@ -21,6 +21,8 @@
   --green-soft: #e9f6ee;
   --red:        #d6453f;   /* out / error */
   --red-soft:   #fdeceb;
+  --amber:      #b8801f;   /* missing - the rack says it is here, it is not */
+  --amber-soft: #fbf2e2;
   --font-display: 'Saira Condensed', 'Arial Narrow', sans-serif;
   --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
   --font-body: 'IBM Plex Sans', Arial, sans-serif;
@@ -82,5 +84,6 @@ input {
 }
 .led-green { background: var(--green); }
 .led-red   { background: var(--red); }
+.led-amber { background: var(--amber); }
 .led-accent { background: var(--accent); }
 .led-off   { background: var(--line); }
