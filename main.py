@@ -17,13 +17,18 @@ BAUD = 9600           # carpark UART baud
 # c1/c2 in the debug shell swaps this whole bundle.
 # GRBL boards use /dev/serial/by-id paths - ACM0/ACM1 enumeration can swap on reboot.
 BY_ID = "/dev/serial/by-id/"
+# column0: whether this carriage can physically reach column 0 - staging (0,0)
+# and the output lane (0,1). Only carriage 1 can, so it is the only one that can
+# run store or get. That also settles the scanner: the label is read at column 0
+# on the way home, so a carriage that cannot get there never needs one, which is
+# why carriage 2 has no scanner fitted.
 CARRIAGES = {
     # carpark1: Pi uart4 (GPIO 8/9, header 24/21) <-> its Teensy Serial1 (pins 0/1)
     1: {"cnc": BY_ID + "usb-Arduino__www.arduino.cc__0043_0353638323635140D2A1-if00",
-        "uart": "/dev/ttyAMA4", "pin": 5},
+        "uart": "/dev/ttyAMA4", "pin": 5, "column0": True},
     # carpark2: Pi uart5 (GPIO 12/13, header 32/33) <-> its Teensy Serial1
     2: {"cnc": BY_ID + "usb-Arduino__www.arduino.cc__0043_03536373332351812222-if00",
-        "uart": "/dev/ttyAMA5", "pin": 6},
+        "uart": "/dev/ttyAMA5", "pin": 6, "column0": False},
 }
 
 MIN_SEPARATION = 140  # mm - carriages collide closer than this (compared in the
@@ -264,6 +269,9 @@ def store_bin(carriages, active, say, target=None, on_status=None):
     on_status is for broadcasting the change; the file is written here either
     way, so a store from the shell records it too.
     """
+    if not carriages[active].get("column0", True):
+        say("carriage %d cannot reach column 0 - store is carriage 1 only" % active)
+        return False
     uart = carriages[active]["uart"]
 
     def seq(ch):                         # per-command timeout, see carpark.TIMEOUTS
@@ -374,6 +382,9 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
     asked for it. Blockers are left alone - they go straight back on a shelf, so
     'in' never stops being true for them.
     """
+    if not carriages[active].get("column0", True):
+        say("carriage %d cannot reach column 0 - get is carriage 1 only" % active)
+        return False
     key = slots.find(barcode)
     if key is None:
         say("no slot assigned for barcode %s" % barcode)
@@ -611,7 +622,8 @@ def open_carriage(cfg):
     uart = serial.Serial(cfg["uart"], BAUD, timeout=1)
     print("connected to", cfg["uart"])
     return {"cnc": cnc, "uart": uart,
-            "sensor": DigitalInputDevice(cfg["pin"], pull_up=False)}
+            "sensor": DigitalInputDevice(cfg["pin"], pull_up=False),
+            "column0": cfg.get("column0", True)}
 
 
 def main():

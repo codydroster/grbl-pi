@@ -1,3 +1,15 @@
+// CARRIAGE 2. A copy of carpark1 kept separate so thresholds can be tuned per
+// board - the sensors are the same design but not the same parts, and the
+// pullup that turns their photocurrent into a voltage varies chip to chip, so
+// nothing here transfers by assumption. Diff against carpark1 before changing
+// anything structural; only the tuned numbers are meant to drift apart.
+//
+// NO BARCODE SCANNER IS FITTED on this carriage yet. The Serial3 code is left
+// in place so adding one later is wiring, not firmware - until then 'R' and 'Q'
+// simply answer "BC -". That costs nothing here: the scanner only matters at
+// column 0, which this carriage cannot reach (see CARRIAGES in main.py), so no
+// sequence it can run asks for a label.
+
 #include <Wire.h>
 #include <Adafruit_INA219.h>   // ASSUMES INA219 - swap this lib + readCurrent() for another chip
 
