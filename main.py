@@ -37,7 +37,7 @@ MIN_SEPARATION = 140  # mm - carriages collide closer than this (compared in the
 # bin on the forks - so whatever shares the rail with it stands this much
 # further off for as long as it is engaged. NOT added the rest of the time:
 # carriage 2 parked is the same size as carriage 1 parked.
-CARRIAGE2_EXTRA = 10
+CARRIAGE2_EXTRA = 20
 
 
 # Gap to keep while the given carriage numbers are engaged in lane work.
