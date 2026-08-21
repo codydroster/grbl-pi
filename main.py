@@ -33,6 +33,16 @@ CARRIAGES = {
 
 MIN_SEPARATION = 140  # mm - carriages collide closer than this (compared in the
                       # shared reference frame, since each has its own machine zero)
+# Carriage 2 sweeps wider while it is actually working a lane - car out, or a
+# bin on the forks - so whatever shares the rail with it stands this much
+# further off for as long as it is engaged. NOT added the rest of the time:
+# carriage 2 parked is the same size as carriage 1 parked.
+CARRIAGE2_EXTRA = 10
+
+
+# Gap to keep while the given carriage numbers are engaged in lane work.
+def separation_while(*working):
+    return MIN_SEPARATION + (CARRIAGE2_EXTRA if 2 in working else 0)
 
 
 HELP = """commands:
@@ -139,7 +149,8 @@ def command_scope(line):
     return "both"          # m/move/store/get, a jog, or raw gcode
 
 
-def clear_path(carriages, active, our_ref, target_ref, say=print):
+def clear_path(carriages, active, our_ref, target_ref, say=print,
+               separation=MIN_SEPARATION):
     """Where the other carriage has to be for us to run our_ref -> target_ref.
 
     Returns None if it is already clear (or absent/unreadable), otherwise
@@ -165,7 +176,7 @@ def clear_path(carriages, active, our_ref, target_ref, say=print):
 
     # it must clear both our destination and the whole path we sweep to get there
     limit = max(our_ref, target_ref) if side > 0 else min(our_ref, target_ref)
-    safe = limit + MIN_SEPARATION * side
+    safe = limit + separation * side
     if (o_ref - safe) * side >= 0:                 # already far enough on its side
         return None
     say("carriage %d at %.0f blocks the run %.0f -> %.0f - moving it to %.0f"
@@ -173,12 +184,12 @@ def clear_path(carriages, active, our_ref, target_ref, say=print):
     return other, oc["cnc"], safe + off_o[0], here[1], abs(o_ref - our_ref)
 
 
-def goto_slot(carriages, n, col, row, say=print):
+def goto_slot(carriages, n, col, row, say=print, separation=MIN_SEPARATION):
     """Drive carriage n to the saved position for col,row, clearing the other
     carriage out of the way. False = missing position or unreadable GRBL.
 
     BOTH CARRIAGES RUN AT ONCE when it is safe to. They travel at the same
-    speed, and the blocker is only ever asked to move to MIN_SEPARATION beyond
+    speed, and the blocker is only ever asked to move to `separation` beyond
     where we are going - so in the direction that closes the gap its trip is
     always the shorter of the two. The gap therefore shrinks monotonically from
     whatever it is now to exactly MIN_SEPARATION, and never dips below.
@@ -188,7 +199,7 @@ def goto_slot(carriages, n, col, row, say=print):
       * EQUAL SPEED. If the blocker is slower the gap undershoots - a quarter
         slower closes it to 75mm on a long run. $110/$111 (max rate) and
         $120/$121 (acceleration) must match on both boards.
-      * ALREADY AT LEAST MIN_SEPARATION APART. Starting closer than that (after
+      * ALREADY AT LEAST `separation` APART. Starting closer than that (after
         hand jogging, say) the blocker's trip is the longer one and the gap
         keeps shrinking. That case falls back to clearing it first, in full.
     """
@@ -202,13 +213,13 @@ def goto_slot(carriages, n, col, row, say=print):
         return False
     x, y = xy[0] + off[0], xy[1] + off[1]
 
-    move = clear_path(carriages, n, ours[0] - off[0], xy[0], say)
+    move = clear_path(carriages, n, ours[0] - off[0], xy[0], say, separation)
     if move is None:                               # nothing in the way
         grbl.goto(c["cnc"], x, y)
         return True
 
     other, ocnc, ox, oy, gap = move
-    if gap < MIN_SEPARATION:
+    if gap < separation:
         say("carriages are only %.0fmm apart - clearing carriage %d first"
             % (gap, other))
         grbl.goto(ocnc, ox, oy)                    # in full, before we add motion
@@ -344,7 +355,8 @@ def store_bin(carriages, active, say, target=None, on_status=None):
     return True
 
 
-def put_bin(carriages, active, say, seq, code, dest, old_key=None):
+def put_bin(carriages, active, say, seq, code, dest, old_key=None,
+            separation=MIN_SEPARATION):
     """Shelve the bin currently on the car into dest ("col,row,depth").
 
     Driving to a measured depth only works with a bin aboard, which is exactly
@@ -352,7 +364,7 @@ def put_bin(carriages, active, say, seq, code, dest, old_key=None):
     """
     col, row, depth = (int(v) for v in dest.split(","))
     say("re-shelving %s at %s" % (code, dest))
-    if not goto_slot(carriages, active, col, row, say=say):
+    if not goto_slot(carriages, active, col, row, say=say, separation=separation):
         say("cannot reach %d,%d" % (col, row))
         return False
     if not seq(str(depth)):
@@ -418,6 +430,10 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
 
     other = 2 if active == 1 else 1
     helper = other if carriages.get(other) else None
+    # Depth 1 is carriage 1 alone. Anything deeper puts carriage 2 into a lane
+    # with a bin on its forks, and it stays that way until the put-back - so the
+    # wider gap applies to EVERY move in the sequence, not just carriage 2's own.
+    sep = separation_while(helper) if depth > 1 else MIN_SEPARATION
 
     def seq(ch):                         # per-command timeout, see carpark.TIMEOUTS
         return carpark.run_sequence(uart, ch, report=lambda l: say("  " + l))
@@ -435,7 +451,7 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
     def lift_out(n, runner):
         """Drive carriage n into the lane and come away with the front bin."""
         say("carriage %d -> %s" % (n, lane))
-        if not goto_slot(carriages, n, col, row, say=say):
+        if not goto_slot(carriages, n, col, row, say=say, separation=sep):
             say("cannot reach %s" % lane)
             return False
         return runner("d") and runner("l") and runner("u")
@@ -448,7 +464,7 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
         """
         status(code, "out-pending")
         say("carriage -> output %d,%d" % OUTPUT)
-        if not goto_slot(carriages, active, *OUTPUT, say=say):
+        if not goto_slot(carriages, active, *OUTPUT, say=say, separation=sep):
             say("bin is on the car, but cannot reach output %d,%d" % OUTPUT)
             status(code, "out")
             return False
@@ -499,7 +515,8 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
             if dest is None:
                 say("nowhere to put %s - rack is full" % got)
                 return False
-            if not put_bin(carriages, active, say, seq, got, dest, slots.find(got)):
+            if not put_bin(carriages, active, say, seq, got, dest, slots.find(got),
+                           separation=sep):
                 return False
 
         # ---- the target, now at the front ----
@@ -528,7 +545,7 @@ def retrieve_bin(carriages, active, say, barcode, on_status=None):
         # However this ended, the helper must not be left holding anything.
         if held_depth is not None:
             say("carriage %d putting its bin back at depth %d" % (helper, held_depth))
-            if not (goto_slot(carriages, helper, col, row, say=say)
+            if not (goto_slot(carriages, helper, col, row, say=say, separation=sep)
                     and seq_h(str(held_depth)) and seq_h("d") and seq_h("g")):
                 say("CARRIAGE %d IS STILL HOLDING A BIN - it could not be put "
                     "back at %s depth %d" % (helper, lane, held_depth))
