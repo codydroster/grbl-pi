@@ -23,6 +23,15 @@ const int SAMPLE_MS  = 20;   // idle loop period
 
 // Lift control: drive each motor until its current spikes (hits its end stop).
 const float    CURRENT_SPIKE   = 80.0;   // mA - stall threshold (TUNE on hardware)
+// Threshold while BOTH lifts run together. It has to be its own number: the
+// INA219 sits on carpark and measures the car's whole supply, so with two
+// motors turning it reads the sum of them. The single-motor 80 would trip the
+// moment both started.
+// UNMEASURED - this is a starting guess, roughly one stalled motor plus one
+// still running. The lift now prints the current that tripped each phase, so
+// one 'u' on the bench gives the real numbers: set this between what the pair
+// draws running and what they draw with B against its stop.
+const float    CURRENT_SPIKE_BOTH = 130.0;
 const int      BREAKFREE_SPEED = 175;    // initial kick to break stiction
 const int      RUN_SPEED       = 100;    // speed after the kick
 const uint32_t BREAKFREE_MS    = 1250;    // kick duration (also covers startup inrush)
@@ -308,26 +317,69 @@ void waitPumping(uint32_t ms) {
 
 // run one car1 motor (dir 'F'/'R') until its current spikes (end stop), then stop.
 // kicks at BREAKFREE_SPEED for BREAKFREE_MS to break stiction, then settles to RUN_SPEED.
-void runUntilSpike(char motor, char dir) {
-  char cmd[8];
-  sprintf(cmd, "%c%c%d", motor, dir, BREAKFREE_SPEED);  // breakfree kick
-  car1cmd(cmd);
-  waitPumping(BREAKFREE_MS);                            // kick + ride out the inrush
-  sprintf(cmd, "%c%c%d", motor, dir, RUN_SPEED);        // settle to running speed
-  car1cmd(cmd);
-  waitPumping(SETTLE_MS);                               // let running current settle
-
+// Run until the current crosses `spike`, or the timeout. Returns the reading
+// that tripped it, or 0 if it never did - the caller reports that number so the
+// thresholds can be set from what the machine actually draws.
+float waitForSpike(float spike) {
   uint32_t t0 = millis();
   while (millis() - t0 < LIFT_TIMEOUT_MS) {
     pump();
-    if (readCurrent() >= CURRENT_SPIKE) break;   // stall -> done
+    float mA = readCurrent();
+    if (mA >= spike) return mA;
   }
-  sprintf(cmd, "%cS", motor);                // stop this motor
+  return 0;
+}
+
+// One line per motor: the current it stalled at, which is what the two
+// thresholds get tuned from. 0 back from waitForSpike means it never stalled -
+// it ran out the timeout instead, and saying "stopped at 0.0 mA" would read
+// like a measurement rather than a failure.
+void reportSpike(char motor, float mA) {
+  if (mA > 0) {
+    Serial1.print(motor); Serial1.print(" stopped at ");
+    Serial1.print(mA, 1); Serial1.println(" mA");
+    Serial.print(motor);  Serial.print(" stopped at ");
+    Serial.print(mA, 1);  Serial.println(" mA");
+  } else {
+    Serial1.print(motor); Serial1.println(" never stalled - timed out");
+    Serial.print(motor);  Serial.println(" never stalled - timed out");
+  }
+}
+
+void setLift(char motor, char dir, int speed) {
+  char cmd[8];
+  sprintf(cmd, "%c%c%d", motor, dir, speed);
   car1cmd(cmd);
 }
 
-void liftUp()   { runUntilSpike('B', 'R'); runUntilSpike('C', 'R'); say("UP DONE"); }
-void liftDown() { runUntilSpike('B', 'F'); runUntilSpike('C', 'F'); say("DOWN DONE"); }
+// BOTH LIFTS AT ONCE. B is geared higher, so it reaches its stop first: the
+// first current spike is B, B is switched off, and the watch continues for C
+// alone at the single-motor threshold.
+//
+// The INA219 reads the car's whole supply, not one motor, so this cannot tell
+// WHICH motor stalled - it takes the gearing on trust. If C ever reached its
+// stop first, B would be switched off still short of its own and the lift would
+// finish uneven. That is the assumption to check first if a lift ends crooked.
+void liftBoth(char dir) {
+  setLift('B', dir, BREAKFREE_SPEED);        // kick both to break stiction
+  setLift('C', dir, BREAKFREE_SPEED);
+  waitPumping(BREAKFREE_MS);                 // kick + ride out the inrush
+  setLift('B', dir, RUN_SPEED);
+  setLift('C', dir, RUN_SPEED);
+  waitPumping(SETTLE_MS);                    // let running current settle
+
+  float first = waitForSpike(CURRENT_SPIKE_BOTH);
+  car1cmd("BS");                             // that was B, by the gearing
+  reportSpike('B', first);
+
+  waitPumping(SETTLE_MS);                    // let the reading fall to C alone
+  float second = waitForSpike(CURRENT_SPIKE);
+  car1cmd("CS");
+  reportSpike('C', second);
+}
+
+void liftUp()   { liftBoth('R'); say("UP DONE"); }
+void liftDown() { liftBoth('F'); say("DOWN DONE"); }
 
 // Drive in until the bin sensor sees a bin, ease off, run a touch further, stop.
 bool driveToBin() {
