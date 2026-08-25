@@ -25,7 +25,7 @@ const int SAMPLE_MS  = 20;   // idle loop period
 const float    CURRENT_SPIKE   = 80.0;   // mA - stall threshold (TUNE on hardware)
 const int      BREAKFREE_SPEED = 175;    // initial kick to break stiction
 const int      RUN_SPEED       = 100;    // speed after the kick
-const uint32_t BREAKFREE_MS    = 250;    // kick duration (also covers startup inrush)
+const uint32_t BREAKFREE_MS    = 1250;    // kick duration (also covers startup inrush)
 const uint32_t SETTLE_MS       = 200;    // after the kick, let running current settle before watching
 const uint32_t LIFT_TIMEOUT_MS = 7000;   // safety: give up on a lift move after this
 
